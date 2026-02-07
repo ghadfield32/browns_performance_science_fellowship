@@ -1,0 +1,57 @@
+[project]
+name = "browns-performance-science-fellowship"
+version = "0.1.0"
+description = "Reproducible 10 Hz player tracking analysis pipeline for Browns Performance Science work project."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0,<3.0",
+  "pandas>=2.2,<3.0",
+  "scipy>=1.13,<2.0",
+  "matplotlib>=3.9,<4.0",
+  "seaborn>=0.13,<1.0",
+  "plotly>=5.24,<6.0",
+  "ruptures>=1.1.9,<2.0",
+  "pyarrow>=17.0,<20.0",
+  "pydantic>=2.9,<3.0",
+  "omegaconf>=2.3,<3.0",
+]
+
+[project.scripts]
+browns-tracking-summary = "browns_tracking.cli:main"
+
+[dependency-groups]
+dev = [
+  "ipykernel>=6.29,<7.0",
+  "jupyterlab>=4.2,<5.0",
+  "pytest>=8.3,<9.0",
+  "ruff>=0.6,<1.0",
+  "mypy>=1.11,<2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/browns_tracking"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.browns_tracking.paths]
+data_file = "data/tracking_data.csv"
+data_fallbacks = [
+  "docs/browns_docs/tracking_data.csv",
+  "browns_docs/tracking_data.csv",
+]
+docs_pptx = "docs/browns_docs/performance_science_fellow_work_project.pptx"
+output_dir = "outputs"
