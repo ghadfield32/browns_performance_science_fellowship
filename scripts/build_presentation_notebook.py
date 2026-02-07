@@ -1,0 +1,315 @@
+"""Generate a presentation-first notebook scaffold for coach slides."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import nbformat as nbf
+
+
+def build_notebook() -> nbf.NotebookNode:
+    nb = nbf.v4.new_notebook()
+    cells: list[nbf.NotebookNode] = []
+
+    cells.append(
+        nbf.v4.new_markdown_cell(
+            "# Coach Slide-Ready Workbook\n\n"
+            "This notebook is optimized for PowerPoint drafting.\n"
+            "Each section outputs copy/paste text and preformatted tables."
+        )
+    )
+
+    cells.append(
+        nbf.v4.new_markdown_cell(
+            "## 0. Setup and Tuned Threshold Model\n"
+            "- Uses the preferred model preset for speed bands, HSR, accel/decel, and rest segmentation.\n"
+            "- Exports text blocks to `outputs/slide_text/` and tables to `outputs/tables/`.\n"
+            "- Unit conversions used in pipeline: yards/second -> mph (x 2.0454545), yards/second^2 -> m/second^2 (x 0.9144)."
+        )
+    )
+
+    cells.append(
+        nbf.v4.new_code_cell(
+            "import pandas as pd\n"
+            "from IPython.display import display\n"
+            "\n"
+            "from browns_tracking.metrics import (\n"
+            "    compute_peak_demand_timeseries,\n"
+            "    peak_distance_table,\n"
+            "    summarize_speed_bands,\n"
+            "    top_non_overlapping_windows,\n"
+            "    session_extrema_table,\n"
+            ")\n"
+            "from browns_tracking.config import default_project_paths\n"
+            "from browns_tracking.pipeline import (\n"
+            "    compute_session_event_counts,\n"
+            "    load_tracking_data,\n"
+            "    split_early_late_summary,\n"
+            "    summarize_session,\n"
+            ")\n"
+            "from browns_tracking.presets import preferred_performance_model\n"
+            "from browns_tracking.presentation import (\n"
+            "    build_slide_1_snapshot_text,\n"
+            "    coach_early_late_table,\n"
+            "    coach_extrema_table,\n"
+            "    coach_peak_distance_table,\n"
+            "    coach_segment_table,\n"
+            "    coach_speed_band_table,\n"
+            "    write_slide_text,\n"
+            ")\n"
+            "from browns_tracking.segmentation import (\n"
+            "    build_coach_phase_summary,\n"
+            "    detect_segments,\n"
+            "    summarize_segments,\n"
+            ")\n"
+            "from browns_tracking.visuals import (\n"
+            "    plot_intensity_timeline,\n"
+            "    plot_movement_map,\n"
+            "    plot_peak_demand_summary,\n"
+            "    save_figure,\n"
+            ")\n"
+            "\n"
+            "pd.set_option('display.max_columns', 120)\n"
+            "pd.set_option('display.width', 220)"
+        )
+    )
+
+    cells.append(
+        nbf.v4.new_code_cell(
+            "paths = default_project_paths()\n"
+            "DATA_PATH = paths.data_file\n"
+            "OUTPUT_DIR = paths.output_dir\n"
+            "FIG_DIR = OUTPUT_DIR / 'figures'\n"
+            "TABLE_DIR = OUTPUT_DIR / 'tables'\n"
+            "TEXT_DIR = OUTPUT_DIR / 'slide_text'\n"
+            "FIG_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "TABLE_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "TEXT_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "model = preferred_performance_model()\n"
+            "\n"
+            "pd.Series({\n"
+            "    'Model': model.name,\n"
+            "    'Rationale': model.rationale,\n"
+            "    'HSR threshold (mph)': model.peak_demand_config.hsr_threshold_mph,\n"
+            "    'Accel threshold (m/s^2)': model.peak_demand_config.accel_threshold_ms2,\n"
+            "    'Decel threshold (m/s^2)': model.peak_demand_config.decel_threshold_ms2,\n"
+            "    'Rest threshold (mph)': model.segmentation_config.rest_speed_threshold_mph,\n"
+            "    'Rest min duration (s)': model.segmentation_config.rest_min_duration_s,\n"
+            "}, name='value').to_frame()"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 1. Run Core Analysis Once"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "df = load_tracking_data(DATA_PATH)\n"
+            "session_summary = summarize_session(df)\n"
+            "\n"
+            "abs_bands = list(model.absolute_speed_bands)\n"
+            "speed_band_summary = summarize_speed_bands(df, abs_bands)\n"
+            "\n"
+            "peak_cfg = model.peak_demand_config\n"
+            "rolling = compute_peak_demand_timeseries(df, peak_cfg)\n"
+            "distance_table = peak_distance_table(rolling, peak_cfg.distance_windows_s)\n"
+            "top_windows = top_non_overlapping_windows(rolling, 'distance_60s_yd', window_s=60, top_n=3)\n"
+            "extrema = session_extrema_table(df)\n"
+            "event_counts = compute_session_event_counts(\n"
+            "    df,\n"
+            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            "    accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
+            "    decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
+            ")\n"
+            "early_late_summary = split_early_late_summary(\n"
+            "    df,\n"
+            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            "    accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
+            "    decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
+            ")\n"
+            "\n"
+            "seg_df, segment_boundaries = detect_segments(df, model.segmentation_config)\n"
+            "segment_summary = summarize_segments(seg_df, speed_bands=abs_bands)\n"
+            "coach_df, coach_phase_summary = build_coach_phase_summary(\n"
+            "    seg_df,\n"
+            "    min_phase_duration_s=30.0,\n"
+            "    max_phases=8,\n"
+            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            "    accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
+            "    decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
+            ")\n"
+            "\n"
+            "session_summary"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 2. Slide 1: Session Snapshot (Copy/Paste Text)"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "slide1_text = build_slide_1_snapshot_text(\n"
+            "    session_summary,\n"
+            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            "    event_summary=event_counts,\n"
+            ")\n"
+            "print(slide1_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_1_session_snapshot.txt', slide1_text)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 3. Slide 2: Workload by Speed Zone"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "slide2_table = coach_speed_band_table(speed_band_summary)\n"
+            "display(slide2_table)\n"
+            "slide2_table.to_csv(TABLE_DIR / 'slide_2_speed_zone_table.csv', index=False)\n"
+            "\n"
+            "top_zone = slide2_table.sort_values('Distance (yd)', ascending=False).iloc[0]\n"
+            "slide2_text = (\n"
+            "    'Speed Zone Takeaways\\n'\n"
+            "    f\"- Largest distance accumulation: {top_zone['Zone']} ({top_zone['Distance (%)']:.1f}% of total distance).\\n\"\n"
+            "    f\"- HSR/Sprint thresholds begin at {peak_cfg.hsr_threshold_mph:.1f} mph and 16.0 mph, respectively.\"\n"
+            ")\n"
+            "print(slide2_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_2_speed_zone_takeaways.txt', slide2_text)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 4. Slide 3: Peak Demands"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "slide3_distance = coach_peak_distance_table(distance_table)\n"
+            "slide3_extrema = coach_extrema_table(extrema)\n"
+            "slide3_events = pd.DataFrame([\n"
+            "    {\n"
+            "        'HSR events (>=1s)': int(event_counts['hsr_event_count']),\n"
+            "        'Sprint events (>=1s)': int(event_counts['sprint_event_count']),\n"
+            "        'Accel events': int(event_counts['accel_event_count']),\n"
+            "        'Decel events': int(event_counts['decel_event_count']),\n"
+            "        'HSR distance (yd)': float(event_counts['hsr_distance_yd']),\n"
+            "        'Sprint distance (yd)': float(event_counts['sprint_distance_yd']),\n"
+            "    }\n"
+            "])\n"
+            "slide3_events['HSR distance (yd)'] = slide3_events['HSR distance (yd)'].round(1)\n"
+            "slide3_events['Sprint distance (yd)'] = slide3_events['Sprint distance (yd)'].round(1)\n"
+            "slide3_top_windows = top_windows[['window_start_utc', 'window_end_utc', 'value']].copy()\n"
+            "slide3_top_windows = slide3_top_windows.rename(\n"
+            "    columns={'window_start_utc': 'Start (UTC)', 'window_end_utc': 'End (UTC)', 'value': 'Distance in 60s (yd)'}\n"
+            ")\n"
+            "slide3_top_windows['Start (UTC)'] = pd.to_datetime(slide3_top_windows['Start (UTC)']).dt.strftime('%H:%M:%S')\n"
+            "slide3_top_windows['End (UTC)'] = pd.to_datetime(slide3_top_windows['End (UTC)']).dt.strftime('%H:%M:%S')\n"
+            "slide3_top_windows['Distance in 60s (yd)'] = slide3_top_windows['Distance in 60s (yd)'].round(1)\n"
+            "\n"
+            "display(slide3_distance)\n"
+            "display(slide3_extrema)\n"
+            "display(slide3_events)\n"
+            "display(slide3_top_windows)\n"
+            "\n"
+            "slide3_distance.to_csv(TABLE_DIR / 'slide_3_peak_distance_table.csv', index=False)\n"
+            "slide3_extrema.to_csv(TABLE_DIR / 'slide_3_extrema_table.csv', index=False)\n"
+            "slide3_events.to_csv(TABLE_DIR / 'slide_3_event_counts_table.csv', index=False)\n"
+            "slide3_top_windows.to_csv(TABLE_DIR / 'slide_3_top_windows_table.csv', index=False)\n"
+            "\n"
+            "best_window = slide3_top_windows.iloc[0]\n"
+            "slide3_text = (\n"
+            "    'Peak Demand Takeaways\\n'\n"
+            "    f\"- Best 1-min demand: {best_window['Distance in 60s (yd)']:.1f} yd from {best_window['Start (UTC)']} to {best_window['End (UTC)']} UTC.\\n\"\n"
+            "    f\"- Max speed: {slide3_extrema.loc[slide3_extrema['Metric'] == 'Max speed (mph)', 'Value'].iloc[0]:.2f} mph.\\n\"\n"
+            "    f\"- HSR/Sprint events (>=1s): {int(event_counts['hsr_event_count'])} / {int(event_counts['sprint_event_count'])}.\\n\"\n"
+            "    f\"- Accel/Decel events (±{peak_cfg.accel_threshold_ms2:.1f} m/s^2): {int(event_counts['accel_event_count'])} / {int(event_counts['decel_event_count'])}.\"\n"
+            ")\n"
+            "print(slide3_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_3_peak_takeaways.txt', slide3_text)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 5. Slide 4: Session Phases (Coach Context)"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "slide4_table = coach_segment_table(coach_phase_summary, top_n=8)\n"
+            "display(slide4_table)\n"
+            "slide4_table.to_csv(TABLE_DIR / 'slide_4_segment_table.csv', index=False)\n"
+            "\n"
+            "top_phase = coach_phase_summary.sort_values('distance_yd', ascending=False).iloc[0]\n"
+            "high_phase_count = int((coach_phase_summary['intensity_level'] == 'High').sum())\n"
+            "slide4_text = (\n"
+            "    'Session Phase Takeaways\\n'\n"
+            "    f\"- Algorithmic blocks were merged into {len(coach_phase_summary)} coach-readable phases.\\n\"\n"
+            "    f\"- Highest volume phase: {top_phase['coach_phase_label']} ({top_phase['distance_yd']:.1f} yd across {top_phase['duration_s'] / 60.0:.1f} min).\\n\"\n"
+            "    f\"- High-intensity phases identified: {high_phase_count}.\"\n"
+            ")\n"
+            "print(slide4_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_4_segment_takeaways.txt', slide4_text)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 6. Slide 5: Early vs Late Session Context"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "slide5_table = coach_early_late_table(early_late_summary)\n"
+            "display(slide5_table)\n"
+            "slide5_table.to_csv(TABLE_DIR / 'slide_5_early_late_table.csv', index=False)\n"
+            "\n"
+            "if len(slide5_table) == 2:\n"
+            "    late = slide5_table.loc[slide5_table['Period'] == 'Late Half'].iloc[0]\n"
+            "    slide5_text = (\n"
+            "        'Early vs Late Takeaways\\n'\n"
+            "        f\"- Late-half distance vs early-half: {late['Distance vs early (%)']:+.1f}%.\\n\"\n"
+            "        f\"- Late-half HSR/Sprint events: {int(late['HSR events'])} / {int(late['Sprint events'])}.\\n\"\n"
+            "        f\"- Late-half accel/decel events: {int(late['Accel events'])} / {int(late['Decel events'])}.\"\n"
+            "    )\n"
+            "else:\n"
+            "    slide5_text = 'Early vs Late Takeaways\\n- Insufficient data to compute a stable split-half comparison.'\n"
+            "print(slide5_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_5_early_late_takeaways.txt', slide5_text)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 7. Slide Figure Exports (PNG)"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "fig1, _ = plot_movement_map(coach_df, segment_col='coach_phase_label', highlight_top_n=3)\n"
+            "fig2, _ = plot_intensity_timeline(\n"
+            "    seg_df,\n"
+            "    top_windows=top_windows,\n"
+            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            ")\n"
+            "fig3, _ = plot_peak_demand_summary(distance_table, extrema)\n"
+            "\n"
+            "save_figure(fig1, FIG_DIR / 'coach_slide_movement_map.png')\n"
+            "save_figure(fig2, FIG_DIR / 'coach_slide_intensity_timeline.png')\n"
+            "save_figure(fig3, FIG_DIR / 'coach_slide_peak_demand_summary.png')\n"
+            "\n"
+            "('Saved', FIG_DIR / 'coach_slide_movement_map.png', FIG_DIR / 'coach_slide_intensity_timeline.png', FIG_DIR / 'coach_slide_peak_demand_summary.png')"
+        )
+    )
+
+    cells.append(
+        nbf.v4.new_markdown_cell(
+            "## 8. PowerPoint Copy Checklist\n"
+            "- Text blocks: `outputs/slide_text/*.txt`\n"
+            "- Slide tables: `outputs/tables/slide_*.csv`\n"
+            "- Slide figures: `outputs/figures/coach_slide_*.png`\n"
+            "- Recommended additions: include Slide 5 early-vs-late table + takeaways"
+        )
+    )
+
+    nb["cells"] = cells
+    nb["metadata"] = {
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3",
+        },
+        "language_info": {"name": "python", "version": "3.13"},
+    }
+    return nb
+
+
+def main() -> None:
+    notebook = build_notebook()
+    output_path = Path("notebooks/02_coach_slide_ready_template.ipynb")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    nbf.write(notebook, output_path)
+    print(f"Wrote {output_path}")
+
+
+if __name__ == "__main__":
+    main()

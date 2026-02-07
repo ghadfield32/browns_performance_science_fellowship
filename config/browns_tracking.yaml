@@ -1,0 +1,10 @@
+paths:
+  data_file: data/tracking_data.csv
+  data_fallbacks:
+    - docs/browns_docs/tracking_data.csv
+    - browns_docs/tracking_data.csv
+  docs_pptx: docs/browns_docs/performance_science_fellow_work_project.pptx
+  output_dir: outputs
+
+runtime:
+  create_output_dirs: false
