@@ -42,9 +42,12 @@ def build_notebook() -> nbf.NotebookNode:
             ")\n"
             "from browns_tracking.config import default_project_paths\n"
             "from browns_tracking.pipeline import (\n"
+            "    classify_hsr_exposure,\n"
+            "    compute_data_quality_summary,\n"
             "    compute_session_event_counts,\n"
             "    load_tracking_data,\n"
             "    split_early_late_summary,\n"
+            "    summarize_window_context,\n"
             "    summarize_session,\n"
             ")\n"
             "from browns_tracking.presets import preferred_performance_model\n"
@@ -104,6 +107,7 @@ def build_notebook() -> nbf.NotebookNode:
         nbf.v4.new_code_cell(
             "df = load_tracking_data(DATA_PATH)\n"
             "session_summary = summarize_session(df)\n"
+            "qa_summary = compute_data_quality_summary(df)\n"
             "\n"
             "abs_bands = list(model.absolute_speed_bands)\n"
             "speed_band_summary = summarize_speed_bands(df, abs_bands)\n"
@@ -154,7 +158,66 @@ def build_notebook() -> nbf.NotebookNode:
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 3. Slide 2: Workload by Speed Zone"))
+    cells.append(nbf.v4.new_markdown_cell("## 3. Definitions and Data QA"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "definitions_text = (\n"
+            "    'Definitions and Assumptions\\n'\n"
+            "    '- Speed bands (mph): Walk 0-3, Cruise 3-9, Run 9-13, HSR 13-16, Sprint >=16.\\n'\n"
+            "    f\"- HSR/Sprint thresholds: >= {peak_cfg.hsr_threshold_mph:.1f} mph / >= 16.0 mph.\\n\"\n"
+            "    f\"- Accel/Decel thresholds: >= {peak_cfg.accel_threshold_ms2:.1f} / <= {peak_cfg.decel_threshold_ms2:.1f} m/s^2.\\n\"\n"
+            "    '- Event definition: contiguous threshold exposure >= 1.0 s.\\n'\n"
+            "    '- Relative zones are anchored to session max speed.\\n'\n"
+            "    '- Rationale: thresholds align with common field-practice reporting and coach readability.'\n"
+            ")\n"
+            "print(definitions_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_1_definitions_and_assumptions.txt', definitions_text)\n"
+            "\n"
+            "qa_table = pd.DataFrame([qa_summary])[\n"
+            "    [\n"
+            "        'sample_count', 'expected_cadence_s', 'pct_on_expected_cadence',\n"
+            "        'max_gap_s', 'gap_count', 'gap_threshold_s',\n"
+            "        'step_distance_outlier_threshold_yd', 'step_distance_outlier_count',\n"
+            "        'step_distance_outlier_pct', 'gap_handling', 'outlier_handling',\n"
+            "    ]\n"
+            "].rename(columns={\n"
+            "    'sample_count': 'Sample count',\n"
+            "    'expected_cadence_s': 'Expected cadence (s)',\n"
+            "    'pct_on_expected_cadence': '% at expected cadence',\n"
+            "    'max_gap_s': 'Max gap (s)',\n"
+            "    'gap_count': 'Gap count',\n"
+            "    'gap_threshold_s': 'Gap threshold (s)',\n"
+            "    'step_distance_outlier_threshold_yd': 'Outlier threshold (yd)',\n"
+            "    'step_distance_outlier_count': 'Outlier count',\n"
+            "    'step_distance_outlier_pct': 'Outlier count (%)',\n"
+            "    'gap_handling': 'Gap handling',\n"
+            "    'outlier_handling': 'Outlier handling',\n"
+            "})\n"
+            "for col, digits in [\n"
+            "    ('Expected cadence (s)', 3),\n"
+            "    ('% at expected cadence', 2),\n"
+            "    ('Max gap (s)', 2),\n"
+            "    ('Gap threshold (s)', 2),\n"
+            "    ('Outlier threshold (yd)', 2),\n"
+            "    ('Outlier count (%)', 2),\n"
+            "]:\n"
+            "    qa_table[col] = qa_table[col].round(digits)\n"
+            "display(qa_table)\n"
+            "qa_table.to_csv(TABLE_DIR / 'slide_1_data_quality_table.csv', index=False)\n"
+            "\n"
+            "qa_text = (\n"
+            "    'Data QA Summary\\n'\n"
+            "    f\"- {qa_table['% at expected cadence'].iloc[0]:.1f}% samples at 0.1s cadence.\\n\"\n"
+            "    f\"- Max gap: {qa_table['Max gap (s)'].iloc[0]:.2f}s; gaps flagged above {qa_table['Gap threshold (s)'].iloc[0]:.2f}s.\\n\"\n"
+            "    f\"- Outlier threshold: {qa_table['Outlier threshold (yd)'].iloc[0]:.2f} yd; flagged count {int(qa_table['Outlier count'].iloc[0])} ({qa_table['Outlier count (%)'].iloc[0]:.2f}%).\\n\"\n"
+            "    '- Handling: rows retained; gaps/outliers are flagged for interpretation (no hidden exclusion).'\n"
+            ")\n"
+            "print(qa_text)\n"
+            "write_slide_text(TEXT_DIR / 'slide_1_data_quality_takeaways.txt', qa_text)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 4. Slide 2: Workload by Speed Zone"))
     cells.append(
         nbf.v4.new_code_cell(
             "slide2_table = coach_speed_band_table(speed_band_summary)\n"
@@ -162,17 +225,22 @@ def build_notebook() -> nbf.NotebookNode:
             "slide2_table.to_csv(TABLE_DIR / 'slide_2_speed_zone_table.csv', index=False)\n"
             "\n"
             "top_zone = slide2_table.sort_values('Distance (yd)', ascending=False).iloc[0]\n"
+            "hsr_label = classify_hsr_exposure(\n"
+            "    total_distance_yd=float(session_summary['distance_yd_from_speed']),\n"
+            "    hsr_distance_yd=float(event_counts['hsr_distance_yd']),\n"
+            ")\n"
             "slide2_text = (\n"
             "    'Speed Zone Takeaways\\n'\n"
             "    f\"- Largest distance accumulation: {top_zone['Zone']} ({top_zone['Distance (%)']:.1f}% of total distance).\\n\"\n"
-            "    f\"- HSR/Sprint thresholds begin at {peak_cfg.hsr_threshold_mph:.1f} mph and 16.0 mph, respectively.\"\n"
+            "    f\"- HSR exposure classification for this session: {hsr_label}.\\n\"\n"
+            "    '- Action: if the objective was high-speed exposure, increase planned high-speed volume in key phases.'\n"
             ")\n"
             "print(slide2_text)\n"
             "write_slide_text(TEXT_DIR / 'slide_2_speed_zone_takeaways.txt', slide2_text)"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 4. Slide 3: Peak Demands"))
+    cells.append(nbf.v4.new_markdown_cell("## 5. Slide 3: Peak Demands"))
     cells.append(
         nbf.v4.new_code_cell(
             "slide3_distance = coach_peak_distance_table(distance_table)\n"
@@ -207,20 +275,34 @@ def build_notebook() -> nbf.NotebookNode:
             "slide3_events.to_csv(TABLE_DIR / 'slide_3_event_counts_table.csv', index=False)\n"
             "slide3_top_windows.to_csv(TABLE_DIR / 'slide_3_top_windows_table.csv', index=False)\n"
             "\n"
-            "best_window = slide3_top_windows.iloc[0]\n"
-            "slide3_text = (\n"
-            "    'Peak Demand Takeaways\\n'\n"
-            "    f\"- Best 1-min demand: {best_window['Distance in 60s (yd)']:.1f} yd from {best_window['Start (UTC)']} to {best_window['End (UTC)']} UTC.\\n\"\n"
-            "    f\"- Max speed: {slide3_extrema.loc[slide3_extrema['Metric'] == 'Max speed (mph)', 'Value'].iloc[0]:.2f} mph.\\n\"\n"
-            "    f\"- HSR/Sprint events (>=1s): {int(event_counts['hsr_event_count'])} / {int(event_counts['sprint_event_count'])}.\\n\"\n"
-            "    f\"- Accel/Decel events (±{peak_cfg.accel_threshold_ms2:.1f} m/s^2): {int(event_counts['accel_event_count'])} / {int(event_counts['decel_event_count'])}.\"\n"
-            ")\n"
+            "if slide3_top_windows.empty:\n"
+            "    slide3_text = (\n"
+            "        'Peak Demand Takeaways\\n'\n"
+            "        '- Not enough samples to derive a stable 1-minute peak-demand window.'\n"
+            "    )\n"
+            "else:\n"
+            "    best_window = slide3_top_windows.iloc[0]\n"
+            "    best_window_raw = top_windows.iloc[0]\n"
+            "    best_window_context = summarize_window_context(\n"
+            "        df,\n"
+            "        window_start_utc=pd.to_datetime(best_window_raw['window_start_utc'], utc=True),\n"
+            "        window_end_utc=pd.to_datetime(best_window_raw['window_end_utc'], utc=True),\n"
+            "        hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            "        accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
+            "        decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
+            "    )\n"
+            "    slide3_text = (\n"
+            "        'Peak Demand Takeaways\\n'\n"
+            "        f\"- Best 1-min demand: {best_window['Distance in 60s (yd)']:.1f} yd from {best_window['Start (UTC)']} to {best_window['End (UTC)']} UTC.\\n\"\n"
+            "        f\"- Window context: HSR/Sprint events {int(best_window_context['hsr_event_count'])} / {int(best_window_context['sprint_event_count'])}; accel/decel {int(best_window_context['accel_event_count'])} / {int(best_window_context['decel_event_count'])}.\\n\"\n"
+            "        '- Action: replicate this window\\'s work:rest pattern for conditioning, and monitor decel load tolerance.'\n"
+            "    )\n"
             "print(slide3_text)\n"
             "write_slide_text(TEXT_DIR / 'slide_3_peak_takeaways.txt', slide3_text)"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 5. Slide 4: Session Phases (Coach Context)"))
+    cells.append(nbf.v4.new_markdown_cell("## 6. Slide 4: Session Phases (Coach Context)"))
     cells.append(
         nbf.v4.new_code_cell(
             "slide4_table = coach_segment_table(coach_phase_summary, top_n=8)\n"
@@ -233,14 +315,15 @@ def build_notebook() -> nbf.NotebookNode:
             "    'Session Phase Takeaways\\n'\n"
             "    f\"- Algorithmic blocks were merged into {len(coach_phase_summary)} coach-readable phases.\\n\"\n"
             "    f\"- Highest volume phase: {top_phase['coach_phase_label']} ({top_phase['distance_yd']:.1f} yd across {top_phase['duration_s'] / 60.0:.1f} min).\\n\"\n"
-            "    f\"- High-intensity phases identified: {high_phase_count}.\"\n"
+            "    f\"- High-intensity phases identified: {high_phase_count}.\\n\"\n"
+            "    '- Action: use highlighted phases for drill debrief and keep low-intensity transitions explicit in planning.'\n"
             ")\n"
             "print(slide4_text)\n"
             "write_slide_text(TEXT_DIR / 'slide_4_segment_takeaways.txt', slide4_text)"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 6. Slide 5: Early vs Late Session Context"))
+    cells.append(nbf.v4.new_markdown_cell("## 7. Slide 5: Early vs Late Session Context"))
     cells.append(
         nbf.v4.new_code_cell(
             "slide5_table = coach_early_late_table(early_late_summary)\n"
@@ -253,7 +336,8 @@ def build_notebook() -> nbf.NotebookNode:
             "        'Early vs Late Takeaways\\n'\n"
             "        f\"- Late-half distance vs early-half: {late['Distance vs early (%)']:+.1f}%.\\n\"\n"
             "        f\"- Late-half HSR/Sprint events: {int(late['HSR events'])} / {int(late['Sprint events'])}.\\n\"\n"
-            "        f\"- Late-half accel/decel events: {int(late['Accel events'])} / {int(late['Decel events'])}.\"\n"
+            "        f\"- Late-half accel/decel events: {int(late['Accel events'])} / {int(late['Decel events'])}.\\n\"\n"
+            "        '- Action: adjust second-half load progression if high-speed or decel demand deviates from intent.'\n"
             "    )\n"
             "else:\n"
             "    slide5_text = 'Early vs Late Takeaways\\n- Insufficient data to compute a stable split-half comparison.'\n"
@@ -262,7 +346,7 @@ def build_notebook() -> nbf.NotebookNode:
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 7. Slide Figure Exports (PNG)"))
+    cells.append(nbf.v4.new_markdown_cell("## 8. Slide Figure Exports (PNG)"))
     cells.append(
         nbf.v4.new_code_cell(
             "fig1, _ = plot_movement_map(coach_df, segment_col='coach_phase_label', highlight_top_n=3)\n"
@@ -283,11 +367,11 @@ def build_notebook() -> nbf.NotebookNode:
 
     cells.append(
         nbf.v4.new_markdown_cell(
-            "## 8. PowerPoint Copy Checklist\n"
+            "## 9. PowerPoint Copy Checklist\n"
             "- Text blocks: `outputs/slide_text/*.txt`\n"
             "- Slide tables: `outputs/tables/slide_*.csv`\n"
             "- Slide figures: `outputs/figures/coach_slide_*.png`\n"
-            "- Recommended additions: include Slide 5 early-vs-late table + takeaways"
+            "- Include assumptions + QA artifacts from Slide 1 support files"
         )
     )
 

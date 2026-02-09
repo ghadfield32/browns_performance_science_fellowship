@@ -15,9 +15,12 @@ from browns_tracking.metrics import (
     top_non_overlapping_windows,
 )
 from browns_tracking.pipeline import (
+    classify_hsr_exposure,
+    compute_data_quality_summary,
     compute_session_event_counts,
     load_tracking_data,
     split_early_late_summary,
+    summarize_window_context,
     summarize_session,
 )
 from browns_tracking.presentation import (
@@ -83,6 +86,7 @@ def main() -> None:
         accel_threshold_ms2=peak_cfg.accel_threshold_ms2,
         decel_threshold_ms2=peak_cfg.decel_threshold_ms2,
     )
+    qa_summary = compute_data_quality_summary(df)
     early_late = split_early_late_summary(
         df,
         hsr_threshold_mph=peak_cfg.hsr_threshold_mph,
@@ -107,13 +111,79 @@ def main() -> None:
     )
     write_slide_text(text_dir / "slide_1_session_snapshot.txt", slide1_text)
 
+    definitions_text = (
+        "Definitions and Assumptions\n"
+        "- Speed bands (mph): Walk 0-3, Cruise 3-9, Run 9-13, HSR 13-16, Sprint >=16.\n"
+        f"- HSR/Sprint thresholds: >= {peak_cfg.hsr_threshold_mph:.1f} mph / >= 16.0 mph.\n"
+        f"- Accel/Decel thresholds: >= {peak_cfg.accel_threshold_ms2:.1f} / <= {peak_cfg.decel_threshold_ms2:.1f} m/s^2.\n"
+        "- Event definition: contiguous threshold exposure >= 1.0 s.\n"
+        "- Relative zones (when used) are anchored to session max speed.\n"
+        "- Rationale: thresholds align with common field-practice reporting and coach readability."
+    )
+    write_slide_text(text_dir / "slide_1_definitions_and_assumptions.txt", definitions_text)
+
+    qa_table = pd.DataFrame([qa_summary])[
+        [
+            "sample_count",
+            "expected_cadence_s",
+            "pct_on_expected_cadence",
+            "max_gap_s",
+            "gap_count",
+            "gap_threshold_s",
+            "step_distance_outlier_threshold_yd",
+            "step_distance_outlier_count",
+            "step_distance_outlier_pct",
+            "gap_handling",
+            "outlier_handling",
+        ]
+    ].rename(
+        columns={
+            "sample_count": "Sample count",
+            "expected_cadence_s": "Expected cadence (s)",
+            "pct_on_expected_cadence": "% at expected cadence",
+            "max_gap_s": "Max gap (s)",
+            "gap_count": "Gap count",
+            "gap_threshold_s": "Gap threshold (s)",
+            "step_distance_outlier_threshold_yd": "Outlier threshold (yd)",
+            "step_distance_outlier_count": "Outlier count",
+            "step_distance_outlier_pct": "Outlier count (%)",
+            "gap_handling": "Gap handling",
+            "outlier_handling": "Outlier handling",
+        }
+    )
+    for col, digits in [
+        ("Expected cadence (s)", 3),
+        ("% at expected cadence", 2),
+        ("Max gap (s)", 2),
+        ("Gap threshold (s)", 2),
+        ("Outlier threshold (yd)", 2),
+        ("Outlier count (%)", 2),
+    ]:
+        qa_table[col] = qa_table[col].round(digits)
+    qa_table.to_csv(table_dir / "slide_1_data_quality_table.csv", index=False)
+
+    qa_text = (
+        "Data QA Summary\n"
+        f"- {qa_table['% at expected cadence'].iloc[0]:.1f}% samples at 0.1s cadence.\n"
+        f"- Max gap: {qa_table['Max gap (s)'].iloc[0]:.2f}s; gaps flagged above {qa_table['Gap threshold (s)'].iloc[0]:.2f}s.\n"
+        f"- Outlier threshold: {qa_table['Outlier threshold (yd)'].iloc[0]:.2f} yd; flagged count "
+        f"{int(qa_table['Outlier count'].iloc[0])} ({qa_table['Outlier count (%)'].iloc[0]:.2f}%).\n"
+        "- Handling: rows retained; gaps/outliers are flagged for interpretation (no hidden exclusion)."
+    )
+    write_slide_text(text_dir / "slide_1_data_quality_takeaways.txt", qa_text)
+
     slide2_table = coach_speed_band_table(speed_band_summary)
     slide2_table.to_csv(table_dir / "slide_2_speed_zone_table.csv", index=False)
     top_zone = slide2_table.sort_values("Distance (yd)", ascending=False).iloc[0]
+    hsr_label = classify_hsr_exposure(
+        total_distance_yd=float(session_summary["distance_yd_from_speed"]),
+        hsr_distance_yd=float(event_counts["hsr_distance_yd"]),
+    )
     slide2_text = (
         "Speed Zone Takeaways\n"
         f"- Largest distance accumulation: {top_zone['Zone']} ({top_zone['Distance (%)']:.1f}% of total distance).\n"
-        f"- HSR/Sprint thresholds begin at {peak_cfg.hsr_threshold_mph:.1f} mph and 16.0 mph, respectively."
+        f"- HSR exposure classification for this session: {hsr_label}.\n"
+        "- Action: if the session objective was high-speed exposure, increase planned high-speed volume in key phases."
     )
     write_slide_text(text_dir / "slide_2_speed_zone_takeaways.txt", slide2_text)
 
@@ -154,15 +224,30 @@ def main() -> None:
     slide3_top_windows["Distance in 60s (yd)"] = slide3_top_windows["Distance in 60s (yd)"].round(1)
     slide3_top_windows.to_csv(table_dir / "slide_3_top_windows_table.csv", index=False)
 
-    best_window = slide3_top_windows.iloc[0]
-    slide3_text = (
-        "Peak Demand Takeaways\n"
-        f"- Best 1-min demand: {best_window['Distance in 60s (yd)']:.1f} yd from {best_window['Start (UTC)']} to {best_window['End (UTC)']} UTC.\n"
-        f"- Max speed: {slide3_extrema.loc[slide3_extrema['Metric'] == 'Max speed (mph)', 'Value'].iloc[0]:.2f} mph.\n"
-        f"- HSR/Sprint events (>=1s): {int(event_counts['hsr_event_count'])} / {int(event_counts['sprint_event_count'])}.\n"
-        f"- Accel/Decel events (±{peak_cfg.accel_threshold_ms2:.1f} m/s^2): "
-        f"{int(event_counts['accel_event_count'])} / {int(event_counts['decel_event_count'])}."
-    )
+    if slide3_top_windows.empty:
+        slide3_text = (
+            "Peak Demand Takeaways\n"
+            "- Not enough samples to derive a stable 1-minute peak-demand window."
+        )
+    else:
+        best_window = slide3_top_windows.iloc[0]
+        best_window_raw = top_windows.iloc[0]
+        best_window_context = summarize_window_context(
+            df,
+            window_start_utc=pd.to_datetime(best_window_raw["window_start_utc"], utc=True),
+            window_end_utc=pd.to_datetime(best_window_raw["window_end_utc"], utc=True),
+            hsr_threshold_mph=peak_cfg.hsr_threshold_mph,
+            accel_threshold_ms2=peak_cfg.accel_threshold_ms2,
+            decel_threshold_ms2=peak_cfg.decel_threshold_ms2,
+        )
+        slide3_text = (
+            "Peak Demand Takeaways\n"
+            f"- Best 1-min demand: {best_window['Distance in 60s (yd)']:.1f} yd from {best_window['Start (UTC)']} to {best_window['End (UTC)']} UTC.\n"
+            f"- Window context: HSR/Sprint events {int(best_window_context['hsr_event_count'])} / "
+            f"{int(best_window_context['sprint_event_count'])}; accel/decel "
+            f"{int(best_window_context['accel_event_count'])} / {int(best_window_context['decel_event_count'])}.\n"
+            "- Action: replicate this window's work:rest pattern for conditioning, and monitor decel load tolerance."
+        )
     write_slide_text(text_dir / "slide_3_peak_takeaways.txt", slide3_text)
 
     slide4_table = coach_segment_table(coach_phase_summary, top_n=8)
@@ -174,7 +259,8 @@ def main() -> None:
         f"- Algorithmic blocks were merged into {len(coach_phase_summary)} coach-readable phases.\n"
         f"- Highest volume phase: {top_phase['coach_phase_label']} "
         f"({top_phase['distance_yd']:.1f} yd across {top_phase['duration_s'] / 60.0:.1f} min).\n"
-        f"- High-intensity phases identified: {high_phase_count}."
+        f"- High-intensity phases identified: {high_phase_count}.\n"
+        "- Action: use the highlighted phases for drill debrief, and keep low-intensity transitions explicit in planning."
     )
     write_slide_text(text_dir / "slide_4_segment_takeaways.txt", slide4_text)
 
@@ -186,7 +272,8 @@ def main() -> None:
             "Early vs Late Takeaways\n"
             f"- Late-half distance vs early-half: {late['Distance vs early (%)']:+.1f}%.\n"
             f"- Late-half HSR/Sprint events: {int(late['HSR events'])} / {int(late['Sprint events'])}.\n"
-            f"- Late-half accel/decel events: {int(late['Accel events'])} / {int(late['Decel events'])}."
+            f"- Late-half accel/decel events: {int(late['Accel events'])} / {int(late['Decel events'])}.\n"
+            "- Action: adjust second-half load progression if high-speed or decel demand deviates from intent."
         )
     else:
         slide5_text = "Early vs Late Takeaways\n- Insufficient data to compute a stable split-half comparison."

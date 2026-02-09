@@ -29,9 +29,12 @@ from .metrics import (
     top_non_overlapping_windows,
 )
 from .pipeline import (
+    classify_hsr_exposure,
+    compute_data_quality_summary,
     compute_session_event_counts,
     load_tracking_data,
     split_early_late_summary,
+    summarize_window_context,
     summarize_session,
 )
 from .presets import PerformanceModelPreset, preferred_performance_model
@@ -56,7 +59,9 @@ __all__ = [
     "SpeedBand",
     "clear_project_path_cache",
     "compute_peak_demand_timeseries",
+    "compute_data_quality_summary",
     "compute_session_event_counts",
+    "classify_hsr_exposure",
     "default_project_config",
     "default_project_paths",
     "default_absolute_speed_bands",
@@ -70,6 +75,7 @@ __all__ = [
     "resolve_output_dir",
     "session_extrema_table",
     "split_early_late_summary",
+    "summarize_window_context",
     "build_coach_phase_summary",
     "summarize_segments",
     "summarize_session",

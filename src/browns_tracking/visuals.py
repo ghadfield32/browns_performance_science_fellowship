@@ -17,8 +17,9 @@ def plot_movement_map(
     x_col: str = "x",
     y_col: str = "y",
     highlight_top_n: int = 3,
+    annotate_highlights: bool = True,
 ) -> tuple[plt.Figure, plt.Axes]:
-    """Template 1: movement map with density and optional top-phase highlights."""
+    """Template 1: movement map with top-phase highlights and direct annotations."""
     sns.set_theme(style="whitegrid")
     fig, ax = plt.subplots(figsize=(11, 6.5), constrained_layout=True)
 
@@ -40,7 +41,6 @@ def plot_movement_map(
         linewidth=1.0,
         alpha=0.5,
         color="#4c566a",
-        label="Full session path",
         zorder=2,
     )
 
@@ -64,22 +64,47 @@ def plot_movement_map(
                 linewidth=2.2,
                 alpha=0.95,
                 color=color,
-                label=str(label),
                 zorder=3,
             )
+            if annotate_highlights and not phase.empty:
+                mid = phase.iloc[len(phase) // 2]
+                ax.annotate(
+                    _compact_phase_label(str(label)),
+                    xy=(float(mid[x_col]), float(mid[y_col])),
+                    xytext=(6, 6),
+                    textcoords="offset points",
+                    fontsize=8,
+                    color="#111111",
+                    bbox={
+                        "boxstyle": "round,pad=0.2",
+                        "facecolor": "white",
+                        "alpha": 0.85,
+                        "edgecolor": color,
+                    },
+                    zorder=5,
+                )
 
-    ax.scatter(df[x_col].iloc[0], df[y_col].iloc[0], color="#2ca02c", s=55, label="Start", zorder=4)
-    ax.scatter(df[x_col].iloc[-1], df[y_col].iloc[-1], color="#d62728", s=55, label="End", zorder=4)
-
-    handles, labels = ax.get_legend_handles_labels()
-    unique = dict(zip(labels, handles))
-    ax.legend(unique.values(), unique.keys(), loc="upper right", frameon=True, fontsize=9)
+    start_x = float(df[x_col].iloc[0])
+    start_y = float(df[y_col].iloc[0])
+    end_x = float(df[x_col].iloc[-1])
+    end_y = float(df[y_col].iloc[-1])
+    ax.scatter(start_x, start_y, color="#2ca02c", s=55, zorder=4)
+    ax.scatter(end_x, end_y, color="#d62728", s=55, zorder=4)
+    ax.annotate("Start", xy=(start_x, start_y), xytext=(6, 6), textcoords="offset points", fontsize=9)
+    ax.annotate("End", xy=(end_x, end_y), xytext=(6, 6), textcoords="offset points", fontsize=9)
 
     ax.set_title("Player Movement Map (Density + Key Phases)", fontsize=13, weight="bold")
     ax.set_xlabel("X position (yards)")
     ax.set_ylabel("Y position (yards)")
     ax.set_aspect("equal", adjustable="box")
     return fig, ax
+
+
+def _compact_phase_label(label: str) -> str:
+    if ":" not in label:
+        return label
+    left, right = label.split(":", maxsplit=1)
+    return f"{left.strip()} ({right.strip().replace(' Intensity', '')})"
 
 
 def plot_intensity_timeline(

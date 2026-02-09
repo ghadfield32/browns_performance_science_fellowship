@@ -142,6 +142,121 @@ def split_early_late_summary(
     return summary
 
 
+def compute_data_quality_summary(
+    df: pd.DataFrame,
+    *,
+    expected_cadence_s: float = EXPECTED_DT_SECONDS,
+    cadence_tolerance_s: float = 0.02,
+    gap_threshold_s: float | None = None,
+    outlier_quantile: float = 0.995,
+) -> dict[str, float | int | str]:
+    """Build an explicit QA summary for cadence gaps and distance outliers."""
+    if df.empty:
+        return {
+            "sample_count": 0,
+            "expected_cadence_s": expected_cadence_s,
+            "pct_on_expected_cadence": 0.0,
+            "max_gap_s": 0.0,
+            "gap_count": 0,
+            "gap_threshold_s": gap_threshold_s or (expected_cadence_s * 1.5),
+            "step_distance_outlier_threshold_yd": 0.0,
+            "step_distance_outlier_count": 0,
+            "step_distance_outlier_pct": 0.0,
+            "gap_handling": "No samples available.",
+            "outlier_handling": "No samples available.",
+        }
+
+    gap_limit = gap_threshold_s if gap_threshold_s is not None else expected_cadence_s * 1.5
+    dt_s = df["dt_s"].astype(float)
+    on_cadence = dt_s.between(
+        expected_cadence_s - cadence_tolerance_s, expected_cadence_s + cadence_tolerance_s
+    )
+    gap_count = int((dt_s > gap_limit).sum())
+
+    step_distance = df["step_distance_yd_from_speed"].astype(float)
+    outlier_threshold = float(step_distance.quantile(outlier_quantile))
+    outlier_count = int((step_distance > outlier_threshold).sum())
+
+    sample_count = int(len(df))
+    return {
+        "sample_count": sample_count,
+        "expected_cadence_s": float(expected_cadence_s),
+        "pct_on_expected_cadence": float(on_cadence.mean() * 100.0),
+        "max_gap_s": float(dt_s.max()),
+        "gap_count": gap_count,
+        "gap_threshold_s": float(gap_limit),
+        "step_distance_outlier_threshold_yd": outlier_threshold,
+        "step_distance_outlier_count": outlier_count,
+        "step_distance_outlier_pct": float((outlier_count / sample_count) * 100.0),
+        "gap_handling": (
+            f"Rows retained; flagged for review when dt_s > {gap_limit:.2f}s (no exclusion)."
+        ),
+        "outlier_handling": (
+            "Rows retained; step-distance outliers flagged above "
+            f"{outlier_threshold:.2f} yd ({outlier_quantile * 100:.1f}th percentile)."
+        ),
+    }
+
+
+def classify_hsr_exposure(total_distance_yd: float, hsr_distance_yd: float) -> str:
+    """Classify HSR exposure as low/moderate/high using session-level distance share."""
+    if total_distance_yd <= 0:
+        return "Low"
+    hsr_pct = (hsr_distance_yd / total_distance_yd) * 100.0
+    if hsr_pct >= 12.0:
+        return "High"
+    if hsr_pct >= 5.0:
+        return "Moderate"
+    return "Low"
+
+
+def summarize_window_context(
+    df: pd.DataFrame,
+    *,
+    window_start_utc: pd.Timestamp,
+    window_end_utc: pd.Timestamp,
+    hsr_threshold_mph: float = 13.0,
+    sprint_threshold_mph: float = 16.0,
+    accel_threshold_ms2: float = 3.0,
+    decel_threshold_ms2: float = -3.0,
+) -> dict[str, float | int | str]:
+    """Summarize workload context inside a specific time window."""
+    window_df = df[(df["ts"] >= window_start_utc) & (df["ts"] <= window_end_utc)].copy()
+    if window_df.empty:
+        return {
+            "window_start_utc": str(window_start_utc),
+            "window_end_utc": str(window_end_utc),
+            "duration_s": 0.0,
+            "distance_yd": 0.0,
+            "hsr_event_count": 0,
+            "sprint_event_count": 0,
+            "accel_event_count": 0,
+            "decel_event_count": 0,
+            "hsr_exposure_level": "Low",
+        }
+
+    events = compute_session_event_counts(
+        window_df,
+        hsr_threshold_mph=hsr_threshold_mph,
+        sprint_threshold_mph=sprint_threshold_mph,
+        accel_threshold_ms2=accel_threshold_ms2,
+        decel_threshold_ms2=decel_threshold_ms2,
+    )
+    distance_yd = float(window_df["step_distance_yd_from_speed"].sum())
+    hsr_distance_yd = float(events["hsr_distance_yd"])
+    return {
+        "window_start_utc": str(window_start_utc),
+        "window_end_utc": str(window_end_utc),
+        "duration_s": float(window_df["dt_s"].sum()),
+        "distance_yd": distance_yd,
+        "hsr_event_count": int(events["hsr_event_count"]),
+        "sprint_event_count": int(events["sprint_event_count"]),
+        "accel_event_count": int(events["accel_event_count"]),
+        "decel_event_count": int(events["decel_event_count"]),
+        "hsr_exposure_level": classify_hsr_exposure(distance_yd, hsr_distance_yd),
+    }
+
+
 def _count_boolean_runs(mask: pd.Series, dt_s: pd.Series, min_duration_s: float) -> int:
     count = 0
     run_duration_s = 0.0

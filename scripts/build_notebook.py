@@ -51,6 +51,7 @@ def build_notebook() -> nbf.NotebookNode:
             ")\n"
             "from browns_tracking.config import default_project_paths\n"
             "from browns_tracking.pipeline import (\n"
+            "    compute_data_quality_summary,\n"
             "    compute_session_event_counts,\n"
             "    load_tracking_data,\n"
             "    split_early_late_summary,\n"
@@ -109,12 +110,33 @@ def build_notebook() -> nbf.NotebookNode:
         )
     )
 
+    cells.append(nbf.v4.new_markdown_cell("## Definitions and Threshold Rationale"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "definitions = pd.DataFrame(\n"
+            "    [\n"
+            "        {'definition': 'Speed bands (mph)', 'value': ', '.join([f\"{b.name} {b.lower_mph}-{b.upper_mph if b.upper_mph is not None else 'max'}\" for b in model.absolute_speed_bands])},\n"
+            "        {'definition': 'HSR threshold (mph)', 'value': f\"{model.peak_demand_config.hsr_threshold_mph:.1f}\"},\n"
+            "        {'definition': 'Sprint threshold (mph)', 'value': '16.0'},\n"
+            "        {'definition': 'Accel/Decel thresholds (m/s^2)', 'value': f\">= {model.peak_demand_config.accel_threshold_ms2:.1f} / <= {model.peak_demand_config.decel_threshold_ms2:.1f}\"},\n"
+            "        {'definition': 'Event definition', 'value': 'Contiguous threshold exposure >= 1.0 s'},\n"
+            "        {'definition': 'Relative bands', 'value': 'Anchored to session max speed'},\n"
+            "        {'definition': 'Rationale', 'value': 'Thresholds reflect common team-practice reporting and coach readability'},\n"
+            "    ]\n"
+            ")\n"
+            "display(definitions)"
+        )
+    )
+
     cells.append(nbf.v4.new_markdown_cell("## 1. Load Data and Session QA Summary"))
     cells.append(
         nbf.v4.new_code_cell(
             "df = load_tracking_data(DATA_PATH)\n"
+            "qa_summary = compute_data_quality_summary(df)\n"
             "session_summary = pd.Series(summarize_session(df), name='value').to_frame()\n"
+            "display(pd.DataFrame([qa_summary]))\n"
             "display(session_summary)\n"
+            "pd.DataFrame([qa_summary]).to_csv(TABLE_DIR / 'data_quality_summary.csv', index=False)\n"
             "\n"
             "df.head()"
         )

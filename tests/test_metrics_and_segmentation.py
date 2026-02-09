@@ -10,7 +10,13 @@ from browns_tracking.metrics import (
     summarize_speed_bands,
     top_non_overlapping_windows,
 )
-from browns_tracking.pipeline import compute_session_event_counts, split_early_late_summary
+from browns_tracking.pipeline import (
+    classify_hsr_exposure,
+    compute_data_quality_summary,
+    compute_session_event_counts,
+    split_early_late_summary,
+    summarize_window_context,
+)
 from browns_tracking.segmentation import (
     SegmentationConfig,
     build_coach_phase_summary,
@@ -139,3 +145,40 @@ def test_event_counts_and_early_late_summary() -> None:
     assert event_counts["accel_event_count"] >= 1
     assert event_counts["decel_event_count"] >= 1
     assert split["period"].tolist() == ["Early Half", "Late Half"]
+
+
+def test_data_quality_summary_and_exposure_labels() -> None:
+    df = pd.DataFrame(
+        {
+            "dt_s": [0.1, 0.1, 0.3, 0.1],
+            "step_distance_yd_from_speed": [1.0, 1.2, 10.0, 1.1],
+        }
+    )
+    qa = compute_data_quality_summary(df, outlier_quantile=0.75, gap_threshold_s=0.15)
+    assert qa["gap_count"] == 1
+    assert qa["step_distance_outlier_count"] >= 1
+
+    assert classify_hsr_exposure(1000.0, 20.0) == "Low"
+    assert classify_hsr_exposure(1000.0, 70.0) == "Moderate"
+    assert classify_hsr_exposure(1000.0, 150.0) == "High"
+
+
+def test_summarize_window_context() -> None:
+    ts = pd.date_range("2025-01-01", periods=20, freq="1s", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "ts": ts,
+            "dt_s": [1.0] * 20,
+            "speed_mph": ([5.0] * 8) + ([14.0] * 8) + ([5.0] * 4),
+            "signed_accel_ms2": ([0.0] * 10) + ([3.5] * 2) + ([0.0] * 8),
+            "step_distance_yd_from_speed": [1.0] * 20,
+        }
+    )
+    out = summarize_window_context(
+        df,
+        window_start_utc=ts[6],
+        window_end_utc=ts[15],
+    )
+
+    assert out["distance_yd"] > 0
+    assert out["hsr_event_count"] >= 1

@@ -15,6 +15,7 @@ from browns_tracking.metrics import (
 )
 from browns_tracking.config import resolve_data_file, resolve_output_dir
 from browns_tracking.pipeline import (
+    compute_data_quality_summary,
     compute_session_event_counts,
     load_tracking_data,
     split_early_late_summary,
@@ -79,6 +80,7 @@ def main() -> None:
         accel_threshold_ms2=peak_cfg.accel_threshold_ms2,
         decel_threshold_ms2=peak_cfg.decel_threshold_ms2,
     )
+    qa_summary = compute_data_quality_summary(df)
     early_late = split_early_late_summary(
         df,
         hsr_threshold_mph=peak_cfg.hsr_threshold_mph,
@@ -115,9 +117,12 @@ def main() -> None:
     top_windows.to_csv(table_dir / "top_1m_distance_windows.csv", index=False)
     extrema.to_csv(table_dir / "session_extrema.csv", index=False)
     pd.DataFrame([event_counts]).to_csv(table_dir / "session_event_counts.csv", index=False)
+    pd.DataFrame([qa_summary]).to_csv(table_dir / "data_quality_summary.csv", index=False)
     early_late.to_csv(table_dir / "early_vs_late_summary.csv", index=False)
     segment_boundaries.to_csv(table_dir / "raw_segment_boundaries.csv", index=False)
     segment_summary.to_csv(table_dir / "raw_segment_summary.csv", index=False)
+    segment_boundaries.to_csv(table_dir / "segment_boundaries.csv", index=False)
+    segment_summary.to_csv(table_dir / "segment_summary.csv", index=False)
     coach_phase_summary.to_csv(table_dir / "coach_phase_summary.csv", index=False)
 
     print("Export complete")
