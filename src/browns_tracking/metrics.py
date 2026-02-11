@@ -113,10 +113,25 @@ def summarize_speed_bands(
 
 
 def compute_peak_demand_timeseries(
-    df: pd.DataFrame, config: PeakDemandConfig = PeakDemandConfig()
+    df: pd.DataFrame,
+    config: PeakDemandConfig = PeakDemandConfig(),
+    *,
+    block_col: str | None = None,
+    min_window_coverage_fraction: float = 0.95,
 ) -> pd.DataFrame:
     """Compute rolling demand metrics for each configured window."""
-    indexed = df[["ts", "speed_mph", "signed_accel_ms2", "step_distance_yd_from_speed"]].copy()
+    required = {"ts", "dt_s", "speed_mph", "signed_accel_ms2", "step_distance_yd_from_speed"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns for peak demand timeseries: {missing}")
+
+    input_block_col = block_col if block_col is not None and block_col in df.columns else None
+    work_block_col = input_block_col or "_rolling_block_id"
+
+    indexed = df[["ts", "dt_s", "speed_mph", "signed_accel_ms2", "step_distance_yd_from_speed"]].copy()
+    indexed[work_block_col] = (
+        df[input_block_col].astype(int).to_numpy() if input_block_col else np.zeros(len(indexed), dtype=int)
+    )
     indexed["hsr_distance_yd"] = np.where(
         indexed["speed_mph"] >= config.hsr_threshold_mph,
         indexed["step_distance_yd_from_speed"],
@@ -125,27 +140,48 @@ def compute_peak_demand_timeseries(
 
     accel_bool = indexed["signed_accel_ms2"] >= config.accel_threshold_ms2
     decel_bool = indexed["signed_accel_ms2"] <= config.decel_threshold_ms2
-    indexed["accel_event"] = (accel_bool & ~accel_bool.shift(fill_value=False)).astype(int)
-    indexed["decel_event"] = (decel_bool & ~decel_bool.shift(fill_value=False)).astype(int)
+    block_break = indexed[work_block_col].ne(indexed[work_block_col].shift(fill_value=indexed[work_block_col].iloc[0]))
+    indexed["accel_event"] = (accel_bool & (~accel_bool.shift(fill_value=False) | block_break)).astype(int)
+    indexed["decel_event"] = (decel_bool & (~decel_bool.shift(fill_value=False) | block_break)).astype(int)
 
     indexed = indexed.set_index("ts")
     out = pd.DataFrame(index=indexed.index)
+    if input_block_col is not None:
+        out[input_block_col] = indexed[work_block_col].astype(int)
+
+    if min_window_coverage_fraction <= 0.0:
+        min_window_coverage_fraction = 0.0
+    min_window_coverage_fraction = min(float(min_window_coverage_fraction), 1.0)
+
     for window_s in config.distance_windows_s:
         window = f"{int(window_s)}s"
-        out[f"distance_{window_s}s_yd"] = indexed["step_distance_yd_from_speed"].rolling(
-            window, min_periods=1
-        ).sum()
-        out[f"hsr_distance_{window_s}s_yd"] = indexed["hsr_distance_yd"].rolling(
-            window, min_periods=1
-        ).sum()
-        out[f"accel_events_{window_s}s"] = indexed["accel_event"].rolling(window, min_periods=1).sum()
-        out[f"decel_events_{window_s}s"] = indexed["decel_event"].rolling(window, min_periods=1).sum()
+        coverage = _rolling_sum_within_blocks(indexed, "dt_s", work_block_col, window)
+        min_coverage_s = float(window_s) * min_window_coverage_fraction
+        valid = coverage >= min_coverage_s
+
+        out[f"distance_{window_s}s_yd"] = _rolling_sum_within_blocks(
+            indexed, "step_distance_yd_from_speed", work_block_col, window
+        ).where(valid)
+        out[f"hsr_distance_{window_s}s_yd"] = _rolling_sum_within_blocks(
+            indexed, "hsr_distance_yd", work_block_col, window
+        ).where(valid)
+        out[f"accel_events_{window_s}s"] = _rolling_sum_within_blocks(
+            indexed, "accel_event", work_block_col, window
+        ).where(valid)
+        out[f"decel_events_{window_s}s"] = _rolling_sum_within_blocks(
+            indexed, "decel_event", work_block_col, window
+        ).where(valid)
 
     return out.reset_index()
 
 
 def top_non_overlapping_windows(
-    rolling_df: pd.DataFrame, metric_column: str, window_s: int, top_n: int = 3
+    rolling_df: pd.DataFrame,
+    metric_column: str,
+    window_s: int,
+    top_n: int = 3,
+    *,
+    block_col: str | None = None,
 ) -> pd.DataFrame:
     """Pick top-N non-overlapping windows from a rolling metric column."""
     required = {"ts", metric_column}
@@ -153,7 +189,14 @@ def top_non_overlapping_windows(
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
-    ranked = rolling_df[["ts", metric_column]].dropna().sort_values(metric_column, ascending=False)
+    active_block_col = block_col
+    if active_block_col is None and "continuous_block_id" in rolling_df.columns:
+        active_block_col = "continuous_block_id"
+
+    ranked_cols = ["ts", metric_column]
+    if active_block_col is not None and active_block_col in rolling_df.columns:
+        ranked_cols.append(active_block_col)
+    ranked = rolling_df[ranked_cols].dropna(subset=[metric_column]).sort_values(metric_column, ascending=False)
 
     selected: list[dict[str, object]] = []
     for row in ranked.itertuples(index=False):
@@ -171,6 +214,12 @@ def top_non_overlapping_windows(
         if overlaps:
             continue
 
+        block_payload: dict[str, int] = {}
+        if active_block_col is not None and active_block_col in ranked_cols:
+            block_value = getattr(row, active_block_col)
+            if pd.notna(block_value):
+                block_payload[active_block_col] = int(block_value)
+
         selected.append(
             {
                 "metric": metric_column,
@@ -178,6 +227,7 @@ def top_non_overlapping_windows(
                 "window_start_utc": start_ts,
                 "window_end_utc": end_ts,
                 "value": float(row[1]),
+                **block_payload,
             }
         )
         if len(selected) >= top_n:
@@ -195,6 +245,18 @@ def peak_distance_table(
         metric_col = f"distance_{window_s}s_yd"
         if metric_col not in rolling_df.columns:
             raise ValueError(f"Missing rolling metric column: {metric_col}")
+        if not rolling_df[metric_col].notna().any():
+            rows.append(
+                {
+                    "window_s": int(window_s),
+                    "window_label": _window_label(window_s),
+                    "best_distance_yd": 0.0,
+                    "window_start_utc": pd.NaT,
+                    "window_end_utc": pd.NaT,
+                }
+            )
+            continue
+
         idx = rolling_df[metric_col].idxmax()
         end_ts = rolling_df.loc[idx, "ts"]
         rows.append(
@@ -243,3 +305,17 @@ def _window_label(window_s: int) -> str:
         return f"{mins}m" if mins > 1 else "1m"
     return f"{window_s}s"
 
+
+def _rolling_sum_within_blocks(
+    indexed_df: pd.DataFrame,
+    value_col: str,
+    block_col: str,
+    window: str,
+) -> pd.Series:
+    series_parts: list[pd.Series] = []
+    for _, chunk in indexed_df.groupby(block_col, sort=True):
+        rolled = chunk[value_col].rolling(window, min_periods=1).sum()
+        series_parts.append(rolled)
+    if not series_parts:
+        return pd.Series(dtype=float)
+    return pd.concat(series_parts)

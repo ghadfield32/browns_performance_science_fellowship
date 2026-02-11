@@ -77,8 +77,12 @@ def coach_peak_distance_table(distance_table: pd.DataFrame) -> pd.DataFrame:
         }
     )
     table["Best distance (yd)"] = table["Best distance (yd)"].round(1)
-    table["Start (UTC)"] = pd.to_datetime(table["Start (UTC)"]).dt.strftime("%H:%M:%S")
-    table["End (UTC)"] = pd.to_datetime(table["End (UTC)"]).dt.strftime("%H:%M:%S")
+    table["Start (UTC)"] = pd.to_datetime(table["Start (UTC)"], utc=True, format="mixed").dt.strftime(
+        "%H:%M:%S"
+    )
+    table["End (UTC)"] = pd.to_datetime(table["End (UTC)"], utc=True, format="mixed").dt.strftime(
+        "%H:%M:%S"
+    )
     return table[["Window", "Best distance (yd)", "Start (UTC)", "End (UTC)"]]
 
 
@@ -87,7 +91,9 @@ def coach_extrema_table(extrema_table: pd.DataFrame) -> pd.DataFrame:
     table = extrema_table.copy()
     table = table.rename(columns={"metric": "Metric", "value": "Value", "ts_utc": "Time (UTC)"})
     table["Value"] = table["Value"].round(2)
-    table["Time (UTC)"] = pd.to_datetime(table["Time (UTC)"]).dt.strftime("%H:%M:%S")
+    table["Time (UTC)"] = pd.to_datetime(table["Time (UTC)"], utc=True, format="mixed").dt.strftime(
+        "%H:%M:%S"
+    )
     return table[["Metric", "Value", "Time (UTC)"]]
 
 

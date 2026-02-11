@@ -1,7 +1,8 @@
-"""Generate the analysis scaffold notebook."""
+"""Generate the analysis notebook scaffold."""
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import nbformat as nbf
@@ -14,64 +15,49 @@ def build_notebook() -> nbf.NotebookNode:
     cells.append(
         nbf.v4.new_markdown_cell(
             "# Browns Tracking Analysis Template\n\n"
-            "This scaffold is aligned to the Performance Science work project brief and focuses on:\n"
-            "1) speed-band workload metrics, 2) rolling peak-demand windows,\n"
-            "3) transparent session segmentation, and 4) slide-ready visuals."
+            "This notebook is organized around three coaching questions:\n"
+            "1. Where did the player spend time (role/space)?\n"
+            "2. When did intensity happen (session structure + peaks)?\n"
+            "3. What were peak demands and repeatable windows?\n\n"
+            "It computes once, validates once, and writes a reusable results contract."
         )
     )
 
     cells.append(
         nbf.v4.new_markdown_cell(
             "## 0. Setup\n"
-            "- Update thresholds/config values as needed for your final narrative.\n"
-            "- Keep outputs reproducible by saving figures/tables to `outputs/`."
-        )
-    )
-
-    cells.append(
-        nbf.v4.new_markdown_cell(
-            "## Unit Assumptions\n"
-            "- Speed conversion: yards/second -> mph (x 2.0454545).\n"
-            "- Acceleration conversion: yards/second^2 -> m/second^2 (x 0.9144)."
+            "- Unit conversions are explicit and stored in `outputs/results.json`.\n"
+            "- Acceleration policy: `a` is raw magnitude; workload accel/decel logic uses signed `sa`.\n"
+            "- Continuity policy: windows/events/lines reset at flagged gaps and improbable jumps.\n"
+            "- Notebook 02 should only read this notebook's outputs."
         )
     )
 
     cells.append(
         nbf.v4.new_code_cell(
             "import pandas as pd\n"
-            "from IPython.display import display\n"
+            "from pathlib import Path\n"
+            "from IPython.display import Image, Markdown, display\n"
             "\n"
-            "from browns_tracking.metrics import (\n"
-            "    compute_peak_demand_timeseries,\n"
-            "    peak_distance_table,\n"
-            "    relative_speed_bands,\n"
-            "    session_extrema_table,\n"
-            "    summarize_speed_bands,\n"
-            "    top_non_overlapping_windows,\n"
-            ")\n"
             "from browns_tracking.config import default_project_paths\n"
-            "from browns_tracking.pipeline import (\n"
-            "    compute_data_quality_summary,\n"
-            "    compute_session_event_counts,\n"
-            "    load_tracking_data,\n"
-            "    split_early_late_summary,\n"
-            "    summarize_session,\n"
-            ")\n"
+            "from browns_tracking.pipeline import load_tracking_data\n"
             "from browns_tracking.presets import preferred_performance_model\n"
-            "from browns_tracking.segmentation import (\n"
-            "    build_coach_phase_summary,\n"
-            "    detect_segments,\n"
-            "    summarize_segments,\n"
+            "from browns_tracking.results_contract import (\n"
+            "    run_session_analysis,\n"
+            "    write_results_contract,\n"
+            "    write_results_tables,\n"
             ")\n"
             "from browns_tracking.visuals import (\n"
+            "    close_figures,\n"
             "    plot_intensity_timeline,\n"
             "    plot_movement_map,\n"
             "    plot_peak_demand_summary,\n"
+            "    plot_session_structure_map,\n"
             "    save_figure,\n"
             ")\n"
             "\n"
-            "pd.set_option('display.max_columns', 100)\n"
-            "pd.set_option('display.width', 200)"
+            "pd.set_option('display.max_columns', 120)\n"
+            "pd.set_option('display.width', 220)"
         )
     )
 
@@ -81,193 +67,205 @@ def build_notebook() -> nbf.NotebookNode:
             "DATA_PATH = paths.data_file\n"
             "OUTPUT_DIR = paths.output_dir\n"
             "FIG_DIR = OUTPUT_DIR / 'figures'\n"
-            "TABLE_DIR = OUTPUT_DIR / 'tables'\n"
             "FIG_DIR.mkdir(parents=True, exist_ok=True)\n"
-            "TABLE_DIR.mkdir(parents=True, exist_ok=True)\n"
             "model = preferred_performance_model()\n"
             "\n"
-            "model.name, DATA_PATH"
+            "pd.Series({\n"
+            "    'Data path': str(DATA_PATH),\n"
+            "    'Output dir': str(OUTPUT_DIR),\n"
+            "    'Model': model.name,\n"
+            "    'Rationale': model.rationale,\n"
+            "}, name='value').to_frame()"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## Preferred Threshold Model"))
     cells.append(
         nbf.v4.new_code_cell(
-            "model_summary = {\n"
-            "    'model_name': model.name,\n"
-            "    'rationale': model.rationale,\n"
-            "    'hsr_threshold_mph': model.peak_demand_config.hsr_threshold_mph,\n"
-            "    'accel_threshold_ms2': model.peak_demand_config.accel_threshold_ms2,\n"
-            "    'decel_threshold_ms2': model.peak_demand_config.decel_threshold_ms2,\n"
-            "    'rest_speed_threshold_mph': model.segmentation_config.rest_speed_threshold_mph,\n"
-            "    'rest_min_duration_s': model.segmentation_config.rest_min_duration_s,\n"
-            "    'speed_bands': [\n"
-            "        f\"{b.name}: {b.lower_mph}-{b.upper_mph if b.upper_mph is not None else 'max'} mph\"\n"
-            "        for b in model.absolute_speed_bands\n"
-            "    ],\n"
-            "}\n"
-            "pd.Series(model_summary, name='value').to_frame()"
+            "def show_saved_png(path, caption='', width=1200):\n"
+            "    png = Path(path)\n"
+            "    if caption:\n"
+            "        display(Markdown(f'**{caption}**'))\n"
+            "    if not png.exists():\n"
+            "        display(Markdown(f':warning: Missing `{png}`. Run Notebook 01 from top.'))\n"
+            "        return\n"
+            "    display(Image(filename=str(png), width=width))"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## Definitions and Threshold Rationale"))
     cells.append(
-        nbf.v4.new_code_cell(
-            "definitions = pd.DataFrame(\n"
-            "    [\n"
-            "        {'definition': 'Speed bands (mph)', 'value': ', '.join([f\"{b.name} {b.lower_mph}-{b.upper_mph if b.upper_mph is not None else 'max'}\" for b in model.absolute_speed_bands])},\n"
-            "        {'definition': 'HSR threshold (mph)', 'value': f\"{model.peak_demand_config.hsr_threshold_mph:.1f}\"},\n"
-            "        {'definition': 'Sprint threshold (mph)', 'value': '16.0'},\n"
-            "        {'definition': 'Accel/Decel thresholds (m/s^2)', 'value': f\">= {model.peak_demand_config.accel_threshold_ms2:.1f} / <= {model.peak_demand_config.decel_threshold_ms2:.1f}\"},\n"
-            "        {'definition': 'Event definition', 'value': 'Contiguous threshold exposure >= 1.0 s'},\n"
-            "        {'definition': 'Relative bands', 'value': 'Anchored to session max speed'},\n"
-            "        {'definition': 'Rationale', 'value': 'Thresholds reflect common team-practice reporting and coach readability'},\n"
-            "    ]\n"
-            ")\n"
-            "display(definitions)"
+        nbf.v4.new_markdown_cell(
+            "## Assignment Alignment Checklist\n"
+            "- Reproducible pipeline: one compute pass -> `outputs/results.json` + canonical tables.\n"
+            "- Meaningful workload metrics: speed zones, events, peak windows, phase profile, early-vs-late drift.\n"
+            "- Coach visuals (<30s scan): `01_space.png`, `02_time.png`, `03_peaks.png`.\n"
+            "- Explicit assumptions: thresholds + unit conversions stored in contract and slide text.\n"
+            "- Practical insight over volume: top windows and phase actions prioritized over raw metric dumps."
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 1. Load Data and Session QA Summary"))
+    cells.append(nbf.v4.new_markdown_cell("## 1. Run Analysis Once (Results Contract Source)"))
     cells.append(
         nbf.v4.new_code_cell(
             "df = load_tracking_data(DATA_PATH)\n"
-            "qa_summary = compute_data_quality_summary(df)\n"
-            "session_summary = pd.Series(summarize_session(df), name='value').to_frame()\n"
-            "display(pd.DataFrame([qa_summary]))\n"
-            "display(session_summary)\n"
-            "pd.DataFrame([qa_summary]).to_csv(TABLE_DIR / 'data_quality_summary.csv', index=False)\n"
+            "results = run_session_analysis(df, model=model)\n"
             "\n"
-            "df.head()"
+            "display(pd.Series(results.session_summary, name='value').to_frame())\n"
+            "display(pd.DataFrame([results.qa_summary]))\n"
+            "display(results.validation_gates)\n"
+            "for line in results.validation_takeaways:\n"
+            "    print(f'- {line}')"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 2. Speed Bands (Absolute + Relative-to-Max)"))
+    cells.append(nbf.v4.new_markdown_cell("## 2. Core Story Tables"))
     cells.append(
         nbf.v4.new_code_cell(
-            "absolute_bands = list(model.absolute_speed_bands)\n"
-            "absolute_band_summary = summarize_speed_bands(df, absolute_bands)\n"
-            "\n"
-            "relative_bands = relative_speed_bands(\n"
-            "    df['speed_mph'].max(),\n"
-            "    percent_edges=model.relative_band_edges,\n"
-            ")\n"
-            "relative_band_summary = summarize_speed_bands(df, relative_bands)\n"
-            "\n"
-            "display(absolute_band_summary)\n"
-            "display(relative_band_summary)\n"
-            "\n"
-            "absolute_band_summary.to_csv(TABLE_DIR / 'absolute_speed_band_summary.csv', index=False)\n"
-            "relative_band_summary.to_csv(TABLE_DIR / 'relative_speed_band_summary.csv', index=False)"
+            "display(results.coach_phase_summary)\n"
+            "display(results.peak_windows)\n"
+            "display(results.distance_table)\n"
+            "display(pd.DataFrame([results.event_counts]))"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 3. Rolling Peak-Demand Windows + Event Counts"))
+    cells.append(nbf.v4.new_markdown_cell("## 3. Coach-Ready Visuals (3 Figure Story)"))
     cells.append(
         nbf.v4.new_code_cell(
-            "peak_cfg = model.peak_demand_config\n"
-            "\n"
-            "rolling = compute_peak_demand_timeseries(df, peak_cfg)\n"
-            "distance_table = peak_distance_table(rolling, peak_cfg.distance_windows_s)\n"
-            "top_1m_distance_windows = top_non_overlapping_windows(\n"
-            "    rolling, metric_column='distance_60s_yd', window_s=60, top_n=3\n"
+            "fig1, _ = plot_movement_map(\n"
+            "    results.coach_df,\n"
+            "    segment_col='coach_phase_label',\n"
+            "    highlight_top_n=3,\n"
+            "    highlight_windows=results.peak_windows,\n"
             ")\n"
-            "extrema_table = session_extrema_table(df)\n"
-            "event_counts = compute_session_event_counts(\n"
-            "    df,\n"
-            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
-            "    accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
-            "    decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
-            ")\n"
-            "early_late_summary = split_early_late_summary(\n"
-            "    df,\n"
-            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
-            "    accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
-            "    decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
-            ")\n"
-            "\n"
-            "display(distance_table)\n"
-            "display(top_1m_distance_windows)\n"
-            "display(extrema_table)\n"
-            "display(pd.DataFrame([event_counts]))\n"
-            "display(early_late_summary)\n"
-            "\n"
-            "distance_table.to_csv(TABLE_DIR / 'peak_distance_windows.csv', index=False)\n"
-            "top_1m_distance_windows.to_csv(TABLE_DIR / 'top_1m_distance_windows.csv', index=False)\n"
-            "extrema_table.to_csv(TABLE_DIR / 'session_extrema.csv', index=False)\n"
-            "pd.DataFrame([event_counts]).to_csv(TABLE_DIR / 'session_event_counts.csv', index=False)\n"
-            "early_late_summary.to_csv(TABLE_DIR / 'early_vs_late_summary.csv', index=False)"
-        )
-    )
-
-    cells.append(
-        nbf.v4.new_markdown_cell(
-            "## 4. Session Segmentation and Coach Phases (Merged for Context)"
-        )
-    )
-    cells.append(
-        nbf.v4.new_code_cell(
-            "segmented_df, segment_boundaries = detect_segments(df, model.segmentation_config)\n"
-            "segment_summary = summarize_segments(segmented_df, speed_bands=absolute_bands)\n"
-            "coach_df, coach_phase_summary = build_coach_phase_summary(\n"
-            "    segmented_df,\n"
-            "    min_phase_duration_s=30.0,\n"
-            "    max_phases=8,\n"
-            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
-            "    accel_threshold_ms2=peak_cfg.accel_threshold_ms2,\n"
-            "    decel_threshold_ms2=peak_cfg.decel_threshold_ms2,\n"
-            ")\n"
-            "\n"
-            "raw_segment_count = int(segment_boundaries.shape[0])\n"
-            "print(f'Raw algorithmic segments detected: {raw_segment_count}')\n"
-            "display(coach_phase_summary)\n"
-            "\n"
-            "segment_boundaries.to_csv(TABLE_DIR / 'raw_segment_boundaries.csv', index=False)\n"
-            "segment_summary.to_csv(TABLE_DIR / 'raw_segment_summary.csv', index=False)\n"
-            "coach_phase_summary.to_csv(TABLE_DIR / 'coach_phase_summary.csv', index=False)"
-        )
-    )
-
-    cells.append(nbf.v4.new_markdown_cell("## 5. Visual Template 1: Movement Map (X-Y)"))
-    cells.append(
-        nbf.v4.new_code_cell(
-            "fig1, _ = plot_movement_map(coach_df, segment_col='coach_phase_label', highlight_top_n=3)\n"
-            "save_figure(fig1, FIG_DIR / 'movement_map.png')\n"
-            "fig1"
-        )
-    )
-
-    cells.append(nbf.v4.new_markdown_cell("## 6. Visual Template 2: Intensity Timeline"))
-    cells.append(
-        nbf.v4.new_code_cell(
             "fig2, _ = plot_intensity_timeline(\n"
-            "    segmented_df,\n"
-            "    top_windows=top_1m_distance_windows,\n"
-            "    hsr_threshold_mph=peak_cfg.hsr_threshold_mph,\n"
+            "    results.coach_df,\n"
+            "    top_windows=results.peak_windows,\n"
+            "    hsr_threshold_mph=model.peak_demand_config.hsr_threshold_mph,\n"
+            "    phase_col='coach_phase_label',\n"
+            "    show_cumulative_distance=False,\n"
             ")\n"
+            "fig3, _ = plot_peak_demand_summary(\n"
+            "    results.distance_table,\n"
+            "    results.extrema_table,\n"
+            "    peak_windows=results.peak_windows,\n"
+            ")\n"
+            "fig4, _ = plot_session_structure_map(results.structure_map_summary)\n"
+            "\n"
+            "save_figure(fig1, FIG_DIR / '01_space.png')\n"
+            "save_figure(fig2, FIG_DIR / '02_time.png')\n"
+            "save_figure(fig3, FIG_DIR / '03_peaks.png')\n"
+            "save_figure(fig4, FIG_DIR / '04_structure.png')\n"
+            "\n"
+            "# Keep legacy names for compatibility with prior drafts.\n"
+            "save_figure(fig1, FIG_DIR / 'movement_map.png')\n"
             "save_figure(fig2, FIG_DIR / 'intensity_timeline.png')\n"
-            "fig2"
+            "save_figure(fig3, FIG_DIR / 'peak_demand_summary.png')\n"
+            "close_figures([fig1, fig2, fig3, fig4])\n"
+            "\n"
+            "show_saved_png(FIG_DIR / '01_space.png', 'Where: Spatial usage and key peak-demand windows')\n"
+            "show_saved_png(FIG_DIR / '02_time.png', 'When: Intensity timeline with phases, HSR ticks, and peaks')\n"
+            "show_saved_png(FIG_DIR / '03_peaks.png', 'What: Peak-demand summary with top-window context')\n"
+            "show_saved_png(FIG_DIR / '04_structure.png', 'Supplemental: Session structure map (drill taxonomy)')\n"
+            "\n"
+            "(\n"
+            "    'Saved and displayed',\n"
+            "    FIG_DIR / '01_space.png',\n"
+            "    FIG_DIR / '02_time.png',\n"
+            "    FIG_DIR / '03_peaks.png',\n"
+            "    FIG_DIR / '04_structure.png',\n"
+            ")"
         )
     )
 
-    cells.append(nbf.v4.new_markdown_cell("## 7. Visual Template 3: Peak-Demand Summary"))
+    cells.append(nbf.v4.new_markdown_cell("## 4. Write Results Contract + Canonical Tables"))
     cells.append(
         nbf.v4.new_code_cell(
-            "fig3, _ = plot_peak_demand_summary(distance_table, extrema_table)\n"
-            "save_figure(fig3, FIG_DIR / 'peak_demand_summary.png')\n"
-            "fig3"
+            "table_paths = write_results_tables(results, OUTPUT_DIR)\n"
+            "contract_path = write_results_contract(\n"
+            "    results,\n"
+            "    input_path=DATA_PATH,\n"
+            "    output_dir=OUTPUT_DIR,\n"
+            "    table_paths=table_paths,\n"
+            "    figure_paths={\n"
+            "        'space': FIG_DIR / '01_space.png',\n"
+            "        'time': FIG_DIR / '02_time.png',\n"
+            "        'peaks': FIG_DIR / '03_peaks.png',\n"
+            "        'structure_map': FIG_DIR / '04_structure.png',\n"
+            "        'movement_map_legacy': FIG_DIR / 'movement_map.png',\n"
+            "        'intensity_timeline_legacy': FIG_DIR / 'intensity_timeline.png',\n"
+            "        'peak_demand_summary_legacy': FIG_DIR / 'peak_demand_summary.png',\n"
+            "    },\n"
+            ")\n"
+            "print('Contract:', contract_path)\n"
+            "print('Canonical tables:', OUTPUT_DIR / 'phase_table.csv', OUTPUT_DIR / 'peak_windows.csv')"
         )
     )
 
     cells.append(
         nbf.v4.new_markdown_cell(
-            "## 8. Slide Export Checklist\n"
-            "- `outputs/figures/movement_map.png`\n"
-            "- `outputs/figures/intensity_timeline.png`\n"
-            "- `outputs/figures/peak_demand_summary.png`\n"
-            "- `outputs/tables/coach_phase_summary.csv` for coach-context phases\n"
-            "- `outputs/tables/session_event_counts.csv` and `outputs/tables/early_vs_late_summary.csv`\n"
-            "- `outputs/tables/*.csv` supporting tables for notebook/slide text"
+            "## 5. Hand-off to Notebook 02\n"
+            "Notebook 02 should only read from:\n"
+            "- `outputs/results.json`\n"
+            "- `outputs/phase_table.csv`\n"
+            "- `outputs/peak_windows.csv`\n"
+            "- `outputs/session_structure_map.csv`\n"
+            "- `outputs/tables/*.csv`\n"
+            "- `outputs/figures/01_space.png`, `02_time.png`, `03_peaks.png` (+ optional `04_structure.png`)"
+        )
+    )
+
+    cells.append(nbf.v4.new_markdown_cell("## 6. Final Deck Outline (6 Slides)"))
+    cells.append(
+        nbf.v4.new_code_cell(
+            "deck_outline = pd.DataFrame([\n"
+            "    {\n"
+            "        'slide': 1,\n"
+            "        'title': 'Session Snapshot + Validation Gates',\n"
+            "        'figure_or_table': (\n"
+            "            'outputs/tables/slide_1_data_quality_table.csv; '\n"
+            "            'outputs/tables/slide_1_validation_gates_table.csv'\n"
+            "        ),\n"
+            "        'one_line_takeaway': 'Data quality gates passed at a usable level, so workload outputs are decision-ready.'\n"
+            "    },\n"
+            "    {\n"
+            "        'slide': 2,\n"
+            "        'title': 'Where: Spatial Usage and Role Signature',\n"
+            "        'figure_or_table': (\n"
+            "            'outputs/figures/01_space.png; outputs/figures/04_structure.png; '\n"
+            "            'outputs/phase_table.csv; outputs/session_structure_map.csv'\n"
+            "        ),\n"
+            "        'one_line_takeaway': 'The session lived in specific field zones and repeated role-consistent movement patterns.'\n"
+            "    },\n"
+            "    {\n"
+            "        'slide': 3,\n"
+            "        'title': 'When: Intensity Timeline and Session Structure',\n"
+            "        'figure_or_table': 'outputs/figures/02_time.png; outputs/tables/slide_3_top_windows_table.csv',\n"
+            "        'one_line_takeaway': 'High-intensity work clustered in identifiable blocks rather than being evenly distributed.'\n"
+            "    },\n"
+            "    {\n"
+            "        'slide': 4,\n"
+            "        'title': 'What: Peak Demands and Repeatable Windows',\n"
+            "        'figure_or_table': (\n"
+            "            'outputs/figures/03_peaks.png; outputs/tables/slide_3_peak_distance_table.csv; '\n"
+            "            'outputs/tables/slide_3_event_counts_table.csv'\n"
+            "        ),\n"
+            "        'one_line_takeaway': 'Top windows define the true worst-case demands to anchor drill and conditioning targets.'\n"
+            "    },\n"
+            "    {\n"
+            "        'slide': 5,\n"
+            "        'title': 'Phase-Level Load Profile',\n"
+            "        'figure_or_table': 'outputs/tables/slide_4_segment_table.csv',\n"
+            "        'one_line_takeaway': 'Merged coach phases show which blocks carried most distance and high-speed stress.'\n"
+            "    },\n"
+            "    {\n"
+            "        'slide': 6,\n"
+            "        'title': 'Early vs Late Readiness Signal',\n"
+            "        'figure_or_table': 'outputs/tables/slide_5_early_late_table.csv',\n"
+            "        'one_line_takeaway': 'Late-session drift quantifies whether second-half output matched training intent.'\n"
+            "    },\n"
+            "])\n"
+            "display(deck_outline)\n"
+            "(OUTPUT_DIR / 'tables').mkdir(parents=True, exist_ok=True)\n"
+            "deck_outline.to_csv(OUTPUT_DIR / 'tables' / 'final_deck_outline.csv', index=False)"
         )
     )
 
@@ -283,8 +281,26 @@ def build_notebook() -> nbf.NotebookNode:
     return nb
 
 
+def _validate_generated_notebook(notebook: nbf.NotebookNode) -> None:
+    """Fail fast if any generated code cell is syntactically invalid."""
+    for idx, cell in enumerate(notebook["cells"]):
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        try:
+            ast.parse(source)
+        except SyntaxError as exc:
+            lines = source.splitlines()
+            bad_line = lines[exc.lineno - 1] if exc.lineno and exc.lineno - 1 < len(lines) else ""
+            raise SyntaxError(
+                f"Generated notebook has invalid code at cell {idx}, line {exc.lineno}: "
+                f"{exc.msg} | {bad_line}"
+            ) from exc
+
+
 def main() -> None:
     notebook = build_notebook()
+    _validate_generated_notebook(notebook)
     output_path = Path("notebooks/01_tracking_analysis_template.ipynb")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     nbf.write(notebook, output_path)

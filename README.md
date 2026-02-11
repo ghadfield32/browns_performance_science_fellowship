@@ -56,27 +56,43 @@ uv run python scripts/render_visual_templates.py --output-dir outputs
 uv run python scripts/render_presentation_assets.py --output-dir outputs
 ```
 
+`render_visual_templates.py` is the single compute step (validation + metrics + figures + `results.json`).
+`render_presentation_assets.py` only reads those outputs and formats slide assets.
+
+### 3) Debug notebook execution errors (root-cause first)
+
+```bash
+python3 scripts/debug_notebook_integrity.py notebooks/01_tracking_analysis_template.ipynb notebooks/02_coach_slide_ready_template.ipynb --strict --flow
+```
+
+For VS Code `# %%` notebook scripts, run the same command on the `.py` file to detect markdown leakage into code cells.
+Typical failure root cause: markdown bullet lines (e.g., `- item`) in a Python code cell.
+For `NameError` execution-order failures (e.g., `df` not defined), `--flow` reports unresolved top-level dependencies by cell.
+
 ## Notebook organization
 
 ### `notebooks/01_tracking_analysis_template.ipynb`
 
-- Definitions and threshold rationale block.
-- Data QA summary table (`% cadence`, max gap, outlier threshold/count, handling policy).
-- Core analysis: speed zones, peak-demand windows, event counts, early-vs-late split.
-- Coach-phase synthesis: merged phases (max 8) from raw segmentation.
-- Coach-readable visuals exported to `outputs/figures`.
+- Single-pass compute notebook.
+- Writes `outputs/results.json`, `outputs/phase_table.csv`, `outputs/peak_windows.csv`.
+- Includes explicit validation gates (cadence, gaps, position jumps, speed alignment).
+- Exports `outputs/figures/01_space.png`, `outputs/figures/02_time.png`, `outputs/figures/03_peaks.png`.
 
 ### `notebooks/02_coach_slide_ready_template.ipynb`
 
-- Single-run analysis for all downstream slide assets.
+- Contract-consumer notebook (no heavy recomputation).
+- Reads `outputs/results.json` + `outputs/tables/*.csv`.
 - Copy/paste text sections for definitions, QA, and actionable takeaways.
 - Slide tables for speed zones, peak windows, event counts, coach phases, and early-vs-late.
-- Figure export cells aligned with presentation workflow.
+- Figure alias cells aligned with presentation workflow.
 
 ## Output artifacts
 
 ### Figures (`outputs/figures`)
 
+- `01_space.png`
+- `02_time.png`
+- `03_peaks.png`
 - `movement_map.png`
 - `intensity_timeline.png`
 - `peak_demand_summary.png`
@@ -90,6 +106,11 @@ Movement map style is coach-focused:
 - direct phase annotations on plot (no giant segment legend)
 
 ### Tables (`outputs/tables`)
+
+Contract-first:
+- `phase_table.csv` (also at `outputs/phase_table.csv`)
+- `peak_windows.csv` (also at `outputs/peak_windows.csv`)
+- `validation_gates.csv`
 
 Core:
 - `absolute_speed_band_summary.csv`
@@ -134,6 +155,7 @@ Presentation tables:
 
 - Sampling gaps are flagged (`dt_s > 0.15s` by default), not silently dropped.
 - Step-distance outliers are flagged via high-quantile threshold (default 99.5th percentile), not silently dropped.
+- Validation gates produce PASS/WARN status for cadence, max gap, XY jump plausibility, and provided-vs-derived speed agreement.
 - QA tables and narrative state handling decisions directly for auditability.
 
 ## Config and path automation
@@ -167,6 +189,7 @@ Environment overrides:
 - `notebooks/`: generated analysis and slide notebooks
 - `outputs/`: generated figures/tables/slide text
 - `tests/`: unit tests
+- `WORK_LOG.md`: compact engineering log (done / doing / next by topic)
 
 ## Submission checklist
 

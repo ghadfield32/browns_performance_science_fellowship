@@ -29,15 +29,27 @@ from .metrics import (
     top_non_overlapping_windows,
 )
 from .pipeline import (
+    annotate_tracking_continuity,
+    build_validation_takeaways,
     classify_hsr_exposure,
     compute_data_quality_summary,
     compute_session_event_counts,
+    compute_validation_gates,
     load_tracking_data,
     split_early_late_summary,
     summarize_window_context,
     summarize_session,
 )
 from .presets import PerformanceModelPreset, preferred_performance_model
+from .results_contract import (
+    SessionAnalysisResults,
+    build_peak_window_table,
+    build_session_structure_map_table,
+    load_results_contract,
+    run_session_analysis,
+    write_results_contract,
+    write_results_tables,
+)
 from .segmentation import (
     SegmentationConfig,
     build_coach_phase_summary,
@@ -61,6 +73,9 @@ __all__ = [
     "compute_peak_demand_timeseries",
     "compute_data_quality_summary",
     "compute_session_event_counts",
+    "compute_validation_gates",
+    "annotate_tracking_continuity",
+    "build_validation_takeaways",
     "classify_hsr_exposure",
     "default_project_config",
     "default_project_paths",
@@ -70,6 +85,13 @@ __all__ = [
     "load_tracking_data",
     "peak_distance_table",
     "preferred_performance_model",
+    "SessionAnalysisResults",
+    "run_session_analysis",
+    "build_peak_window_table",
+    "build_session_structure_map_table",
+    "write_results_tables",
+    "write_results_contract",
+    "load_results_contract",
     "relative_speed_bands",
     "resolve_data_file",
     "resolve_output_dir",
