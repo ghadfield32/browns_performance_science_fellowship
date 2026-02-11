@@ -91,6 +91,11 @@ def add_snapshot_slide(prs: Presentation, output_dir: Path, results: dict) -> No
     """Slide 2: Session snapshot + data quality + validation gates."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])  # Blank layout
 
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
+
     # Title
     add_text_box(
         slide,
@@ -144,6 +149,11 @@ def add_movement_map_slide(prs: Presentation, output_dir: Path) -> None:
     """Slide 3: Spatial movement map."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])
 
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
+
     add_text_box(
         slide,
         "Where: Spatial Usage and Peak Windows",
@@ -180,6 +190,11 @@ def add_intensity_timeline_slide(prs: Presentation, output_dir: Path) -> None:
     """Slide 4: Intensity timeline with top windows table."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])
 
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
+
     add_text_box(
         slide,
         "When: Intensity Timeline",
@@ -209,6 +224,11 @@ def add_intensity_timeline_slide(prs: Presentation, output_dir: Path) -> None:
 def add_peak_demands_slide(prs: Presentation, output_dir: Path) -> None:
     """Slide 5: Peak demands figure + tables."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])
+
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
 
     add_text_box(
         slide,
@@ -246,6 +266,11 @@ def add_speed_zones_slide(prs: Presentation, output_dir: Path) -> None:
     """Slide 6: Speed zone breakdown table + takeaways."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])
 
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
+
     add_text_box(
         slide,
         "Speed Zone Breakdown",
@@ -275,6 +300,11 @@ def add_speed_zones_slide(prs: Presentation, output_dir: Path) -> None:
 def add_phases_comparison_slide(prs: Presentation, output_dir: Path) -> None:
     """Slide 7: Session phases + Early vs Late comparison."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])
+
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
 
     add_text_box(
         slide,
@@ -316,6 +346,11 @@ def add_phases_comparison_slide(prs: Presentation, output_dir: Path) -> None:
 def add_takeaways_slide(prs: Presentation, output_dir: Path, results: dict) -> None:
     """Slide 8: Key takeaways + recommendations."""
     slide = prs.slides.add_slide(prs.slide_layouts[5])
+
+    # Clear any placeholder text
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            shape.text = ""
 
     add_text_box(
         slide,
@@ -394,12 +429,17 @@ def add_dataframe_table(
         rows + 1, cols, Inches(left), Inches(top), Inches(width), Inches(height)
     ).table
 
+    # Set column widths evenly
+    col_width = Inches(width / cols)
+    for col_idx in range(cols):
+        table.columns[col_idx].width = col_width
+
     # Headers
     for col_idx, col_name in enumerate(df.columns):
         cell = table.cell(0, col_idx)
         cell.text = str(col_name)
         cell.text_frame.paragraphs[0].font.bold = True
-        cell.text_frame.paragraphs[0].font.size = Pt(10)
+        cell.text_frame.paragraphs[0].font.size = Pt(11)
 
     # Data
     for row_idx in range(rows):
@@ -407,19 +447,15 @@ def add_dataframe_table(
             cell = table.cell(row_idx + 1, col_idx)
             value = df.iloc[row_idx, col_idx]
 
-            # Format numbers nicely
+            # Simple formatting
             if pd.isna(value):
                 cell.text = "N/A"
-            elif isinstance(value, (int, float)):
-                # Format numbers with appropriate precision
-                if isinstance(value, int) or value == int(value):
-                    cell.text = f"{int(value):,}"
-                else:
-                    cell.text = f"{value:.2f}"
+            elif isinstance(value, float):
+                cell.text = f"{value:.1f}"
             else:
                 cell.text = str(value)
 
-            cell.text_frame.paragraphs[0].font.size = Pt(9)
+            cell.text_frame.paragraphs[0].font.size = Pt(10)
 
 
 def main() -> None:
