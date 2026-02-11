@@ -15,23 +15,28 @@ from .constants import (
 
 
 def load_tracking_data(csv_path: str | Path) -> pd.DataFrame:
-    """Load CSV, normalize types, sort by timestamp, and add derived columns."""
+    """Load CSV, normalize types, sort by timestamp, and add derived columns.
+
+    Distance source: Uses speed-integrated distance as primary source.
+    The vendor 'dis' column is NOT used (shows -74.66% systematic error vs speed channel).
+    XY-derived distance is computed for validation only.
+    """
     df = pd.read_csv(csv_path)
-    df["ts"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+    df["ts"] = pd.to_datetime(df["ts"], utc=True)
     df = df.sort_values("ts").reset_index(drop=True)
 
     dt = df["ts"].diff().dt.total_seconds()
     df["dt_s"] = dt.fillna(EXPECTED_DT_SECONDS)
 
+    # Unit conversions
     df["speed_mph"] = df["s"] * YARDS_PER_SECOND_TO_MPH
     df["accel_ms2"] = df["a"] * YARDS_PER_SECOND_SQ_TO_M_PER_SECOND_SQ
     df["signed_accel_ms2"] = df["sa"] * YARDS_PER_SECOND_SQ_TO_M_PER_SECOND_SQ
-    df["step_distance_yd_from_speed"] = df["s"] * df["dt_s"]
-    if "dis" in df.columns:
-        df["step_distance_yd_vendor_dis"] = pd.to_numeric(df["dis"], errors="coerce").fillna(0.0).clip(lower=0.0)
-    else:
-        df["step_distance_yd_vendor_dis"] = np.nan
 
+    # PRIMARY distance source: speed-integrated
+    df["step_distance_yd_from_speed"] = df["s"] * df["dt_s"]
+
+    # XY-derived distance for validation only (corr=0.998 with speed-integrated)
     xy_step = np.sqrt(df["x"].diff().pow(2) + df["y"].diff().pow(2))
     df["step_distance_xy_yd"] = xy_step.fillna(0.0)
 
@@ -44,16 +49,6 @@ def summarize_session(df: pd.DataFrame) -> dict[str, float | int | str]:
     duration_s = float((df["ts"].iloc[-1] - df["ts"].iloc[0]).total_seconds())
     distance_yd_from_speed = float(df["step_distance_yd_from_speed"].sum())
     distance_yd_from_xy = float(df["step_distance_xy_yd"].sum())
-    if "step_distance_yd_vendor_dis" in df.columns and df["step_distance_yd_vendor_dis"].notna().any():
-        distance_yd_from_dis = float(df["step_distance_yd_vendor_dis"].sum())
-        dis_vs_speed_delta_yd = float(distance_yd_from_dis - distance_yd_from_speed)
-        dis_vs_speed_delta_pct = (
-            float((dis_vs_speed_delta_yd / distance_yd_from_speed) * 100.0) if distance_yd_from_speed > 0 else 0.0
-        )
-    else:
-        distance_yd_from_dis = np.nan
-        dis_vs_speed_delta_yd = np.nan
-        dis_vs_speed_delta_pct = np.nan
 
     return {
         "rows": int(len(df)),
@@ -63,9 +58,6 @@ def summarize_session(df: pd.DataFrame) -> dict[str, float | int | str]:
         "sampling_gap_count": gaps,
         "distance_yd_from_speed": distance_yd_from_speed,
         "distance_yd_from_xy": distance_yd_from_xy,
-        "distance_yd_from_dis": distance_yd_from_dis,
-        "distance_dis_minus_speed_yd": dis_vs_speed_delta_yd,
-        "distance_dis_minus_speed_pct": dis_vs_speed_delta_pct,
         "mean_speed_mph": float(df["speed_mph"].mean()),
         "peak_speed_mph": float(df["speed_mph"].max()),
         "mean_accel_ms2": float(df["signed_accel_ms2"].mean()),
@@ -93,11 +85,9 @@ def annotate_tracking_continuity(
     dt_s = work["dt_s"].astype(float)
     gap_break = dt_s > float(gap_threshold_s)
 
-    if "step_distance_xy_yd" in work.columns:
-        xy_speed_yd_s = np.where(dt_s > 0, work["step_distance_xy_yd"].astype(float) / dt_s, np.nan)
-        jump_break = np.isfinite(xy_speed_yd_s) & (xy_speed_yd_s > float(max_plausible_xy_speed_yd_s))
-    else:
-        jump_break = np.zeros(len(work), dtype=bool)
+    # Detect improbable XY jumps using XY-derived speed
+    xy_speed_yd_s = np.where(dt_s > 0, work["step_distance_xy_yd"].astype(float) / dt_s, np.nan)
+    jump_break = np.isfinite(xy_speed_yd_s) & (xy_speed_yd_s > float(max_plausible_xy_speed_yd_s))
 
     break_before = pd.Series(gap_break | jump_break, index=work.index, dtype=bool)
     break_before.iloc[0] = False
@@ -127,18 +117,18 @@ def build_visualization_frame(
 
     work = df.copy()
     index = work.index
-    speed = pd.to_numeric(work.get("speed_mph", pd.Series(np.nan, index=index)), errors="coerce")
-    dt_s = pd.to_numeric(work.get("dt_s", pd.Series(np.nan, index=index)), errors="coerce")
+    speed = work["speed_mph"]
+    dt_s = work["dt_s"]
 
     active_mask = speed >= float(active_speed_threshold_mph)
     gap_ok_mask = dt_s <= float(gap_threshold_s) if dt_s.notna().any() else pd.Series(True, index=index)
 
     spatial_ok_mask = pd.Series(True, index=index)
-    if require_spatial_ok and "spatial_sample_ok" in work.columns:
+    if require_spatial_ok:
         spatial_ok_mask = work["spatial_sample_ok"].fillna(False).astype(bool)
 
-    x = pd.to_numeric(work.get("x", pd.Series(np.nan, index=index)), errors="coerce")
-    y = pd.to_numeric(work.get("y", pd.Series(np.nan, index=index)), errors="coerce")
+    x = work["x"]
+    y = work["y"]
     q_low, q_high = position_quantiles
     q_low = float(np.clip(q_low, 0.0, 1.0))
     q_high = float(np.clip(q_high, 0.0, 1.0))
@@ -172,7 +162,7 @@ def build_visualization_frame(
     )
 
     viz_df = work[work["viz_sample_ok"]].copy().sort_values("ts").reset_index(drop=True)
-    if viz_df.empty and "spatial_sample_ok" in work.columns:
+    if viz_df.empty:
         fallback = work[work["spatial_sample_ok"].fillna(False)].copy()
         if not fallback.empty:
             viz_df = fallback.sort_values("ts").reset_index(drop=True)
@@ -365,19 +355,7 @@ def compute_data_quality_summary(
     inactive_mask = speed_mph <= float(inactive_speed_threshold_mph)
     inactive_count = int(inactive_mask.sum()) if not speed_mph.empty else 0
     inactive_pct = float((inactive_count / sample_count) * 100.0) if sample_count > 0 else 0.0
-    distance_yd_from_speed = float(pd.to_numeric(df["step_distance_yd_from_speed"], errors="coerce").sum())
-    if "step_distance_yd_vendor_dis" in df.columns and df["step_distance_yd_vendor_dis"].notna().any():
-        distance_yd_from_dis = float(pd.to_numeric(df["step_distance_yd_vendor_dis"], errors="coerce").sum())
-        dis_minus_speed_yd = float(distance_yd_from_dis - distance_yd_from_speed)
-        dis_minus_speed_pct = (
-            float((dis_minus_speed_yd / distance_yd_from_speed) * 100.0)
-            if distance_yd_from_speed > 0
-            else 0.0
-        )
-    else:
-        distance_yd_from_dis = np.nan
-        dis_minus_speed_yd = np.nan
-        dis_minus_speed_pct = np.nan
+    distance_yd_from_speed = float(df["step_distance_yd_from_speed"].sum())
 
     q_low, q_high = position_outlier_quantiles
     q_low = float(np.clip(q_low, 0.0, 1.0))
@@ -471,9 +449,6 @@ def compute_data_quality_summary(
         "peak_speed_mph": peak_speed_mph,
         "pct_speed_le_0_5_mph": pct_speed_le_0_5_mph,
         "distance_yd_from_speed": distance_yd_from_speed,
-        "distance_yd_from_dis": distance_yd_from_dis,
-        "distance_dis_minus_speed_yd": dis_minus_speed_yd,
-        "distance_dis_minus_speed_pct": dis_minus_speed_pct,
         "inactive_speed_threshold_mph": float(inactive_speed_threshold_mph),
         "inactive_sample_count": inactive_count,
         "inactive_sample_pct": inactive_pct,
@@ -612,15 +587,8 @@ def compute_validation_gates(
         outlier_count = 0
         outlier_pct = 0.0
 
-    if "step_distance_yd_vendor_dis" in df.columns and df["step_distance_yd_vendor_dis"].notna().any():
-        vendor_distance = float(pd.to_numeric(df["step_distance_yd_vendor_dis"], errors="coerce").sum())
-        speed_distance = float(pd.to_numeric(df["step_distance_yd_from_speed"], errors="coerce").sum())
-        if speed_distance > 0:
-            dis_minus_speed_pct = float(abs(vendor_distance - speed_distance) / speed_distance * 100.0)
-        else:
-            dis_minus_speed_pct = np.nan
-    else:
-        dis_minus_speed_pct = np.nan
+    # Vendor dis column not used (systematic -74.66% error vs speed-integrated distance)
+    dis_minus_speed_pct = np.nan
 
     def _status(value: float, threshold: float, direction: str) -> str:
         if np.isnan(value):
