@@ -37,6 +37,57 @@ uv venv
 uv sync --group dev
 ```
 
+## Hybrid Approach: Package + Self-Contained Option
+
+This project offers **two ways** to run the analysis:
+
+### Option 1: Using the browns_tracking Package (Development/Full-Featured)
+
+Full-featured analysis with modular code organization:
+
+```bash
+uv sync --group dev
+uv run python scripts/render_visual_templates.py
+uv run python scripts/render_presentation_assets.py
+uv run python scripts/build_powerpoint.py
+```
+
+**Features**: Complete analysis pipeline with QC framework, session segmentation, all visualizations, and automated PowerPoint generation.
+
+### Option 2: Self-Contained Notebook (Submission/Grading-Friendly)
+
+Zero package dependencies - runs with only standard Python libraries (pandas, numpy, matplotlib):
+
+```bash
+# Open and run in Jupyter
+jupyter notebook notebooks/00_self_contained_analysis.ipynb
+```
+
+Or execute via command line:
+```bash
+jupyter nbconvert --to notebook --execute notebooks/00_self_contained_analysis.ipynb
+```
+
+**Features**: Complete workload analysis (speed bands, peak windows, events, early vs late), 3 coach-ready figures, and results export. **No browns_tracking package installation required.**
+
+### PowerPoint Deliverable
+
+Automated generation from analysis outputs:
+
+```bash
+uv run python scripts/build_powerpoint.py
+```
+
+**Output**: `docs/deliverables/tracking_analysis_deliverable.pptx` (8 slides)
+
+## Key Changes from Initial Version
+
+1. **Removed defensive coding**: Code fails loudly on missing data instead of using fallbacks
+2. **Fixed distance calculation**: Uses speed-integrated distance; rejects vendor `dis` column (-74.66% systematic error)
+3. **Added self-contained option**: `notebooks/00_self_contained_analysis.ipynb` runs without package installation
+4. **Automated PowerPoint**: Programmatic slide generation ensures reproducibility
+5. **Updated tests**: All tests pass with defensive coding removed
+
 ## Main workflows
 
 ### 1) Regenerate notebooks (recommended after code changes)
@@ -197,10 +248,27 @@ Environment overrides:
 - `tests/`: unit tests
 - `WORK_LOG.md`: compact engineering log (done / doing / next by topic)
 
-## Submission checklist
+## Submission Checklist
 
-- Regenerate notebooks from scripts.
-- Re-export all artifacts to `outputs/`.
-- Confirm `outputs/slide_text/*.txt` are current.
-- Confirm movement map uses highlighted phases (not dense raw-block legend).
-- Include README + code + outputs for fully reproducible review.
+Before submitting:
+
+- [ ] **Run self-contained notebook**: `jupyter nbconvert --execute notebooks/00_self_contained_analysis.ipynb`
+- [ ] **Generate PowerPoint**: `uv run python scripts/build_powerpoint.py`
+- [ ] **Verify PowerPoint**: Open `docs/deliverables/tracking_analysis_deliverable.pptx` and confirm 8 slides
+- [ ] **Verify outputs**: Check that `outputs/` contains figures/, tables/, and results.json
+- [ ] **Run package pipeline** (optional): `uv run python scripts/render_visual_templates.py && uv run python scripts/render_presentation_assets.py`
+- [ ] **Run tests** (optional): `uv run pytest tests/`
+
+## Final Deliverables
+
+### For Submission/Grading
+1. **Self-contained notebook**: `notebooks/00_self_contained_analysis.ipynb` - Runs with only pandas, numpy, matplotlib
+2. **PowerPoint deliverable**: `docs/deliverables/tracking_analysis_deliverable.pptx` - 8 coach-ready slides
+3. **Outputs directory**: `outputs/` - Contains results.json, figures/, tables/
+4. **This README**: Documents both package and self-contained workflows
+
+### For Development/Future Work
+1. **browns_tracking package**: `src/browns_tracking/` - Modular, well-tested codebase
+2. **Original notebooks**: `notebooks/01_tracking_analysis_template.ipynb`, `02_coach_slide_ready_template.ipynb`
+3. **Scripts**: `scripts/` - Pipeline automation (render_visual_templates.py, render_presentation_assets.py, build_powerpoint.py)
+4. **Tests**: `tests/` - Unit test suite
