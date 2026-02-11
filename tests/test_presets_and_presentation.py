@@ -5,6 +5,7 @@ import pandas as pd
 from browns_tracking.presentation import (
     build_slide_1_snapshot_text,
     coach_early_late_table,
+    coach_peak_distance_table,
     coach_speed_band_table,
 )
 from browns_tracking.presets import preferred_performance_model
@@ -95,4 +96,25 @@ def test_coach_early_late_table_columns() -> None:
         "Sprint events",
         "Accel events",
         "Decel events",
+    ]
+
+
+def test_coach_peak_distance_table_columns() -> None:
+    df = pd.DataFrame(
+        {
+            "window_s": [30, 60],
+            "window_label": ["30s", "1m"],
+            "best_distance_yd": [120.0, 200.0],
+            "best_intensity_yd_per_min": [240.0, 200.0],
+            "window_start_utc": ["2025-01-01T00:00:00Z", "2025-01-01T00:10:00Z"],
+            "window_end_utc": ["2025-01-01T00:00:30Z", "2025-01-01T00:11:00Z"],
+        }
+    )
+    out = coach_peak_distance_table(df)
+    assert list(out.columns) == [
+        "Window",
+        "Peak intensity (yd/min)",
+        "Best distance (yd)",
+        "Start (UTC)",
+        "End (UTC)",
     ]

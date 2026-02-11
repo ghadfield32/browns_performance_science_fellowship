@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import shutil
 
+import numpy as np
 import pandas as pd
 
 from browns_tracking.config import resolve_output_dir
@@ -48,12 +49,37 @@ def main() -> None:
     contract = load_results_contract(output_dir)
     session_summary = contract["session_summary"]
     qa_summary = contract["qa_summary"]
+    qc_status = contract.get("qc_status", "QC FAILED")
+    overall_status = str(qa_summary.get("overall_status", "UNKNOWN")).upper()
+    if overall_status == "UNKNOWN":
+        if qc_status == "QC PASS":
+            overall_status = "PASS"
+        elif qc_status == "QC WARN":
+            overall_status = "WARN"
+        else:
+            overall_status = "FAIL"
     validation_takeaways = contract.get("validation_takeaways", [])
     thresholds = contract["thresholds"]
     hsr_threshold_mph = float(thresholds["hsr_threshold_mph"])
+    sprint_threshold_mph = float(
+        thresholds.get(
+            "sprint_threshold_mph",
+            next(
+                (
+                    float(band.get("lower_mph", 16.0))
+                    for band in thresholds.get("speed_bands_mph", [])
+                    if str(band.get("name", "")).strip().lower() == "sprint"
+                ),
+                16.0,
+            ),
+        )
+    )
     accel_threshold_ms2 = float(thresholds["accel_threshold_ms2"])
     decel_threshold_ms2 = float(thresholds["decel_threshold_ms2"])
     speed_bands = thresholds["speed_bands_mph"]
+    units = contract.get("units", {})
+    speed_conversion_factor = float(units.get("speed_conversion", {}).get("factor", 2.0454545))
+    accel_conversion_factor = float(units.get("acceleration_conversion", {}).get("factor", 0.9144))
 
     speed_band_summary = pd.read_csv(table_dir / "absolute_speed_band_summary.csv")
     distance_table = pd.read_csv(table_dir / "peak_distance_windows.csv")
@@ -63,9 +89,20 @@ def main() -> None:
     coach_phase_summary = pd.read_csv(table_dir / "coach_phase_summary.csv")
     session_structure_map = pd.read_csv(table_dir / "session_structure_map.csv")
     validation_gates = pd.read_csv(table_dir / "validation_gates.csv")
-    peak_windows = pd.read_csv(output_dir / "peak_windows.csv")
+    qc_checks = pd.read_csv(table_dir / "qc_checks.csv")
+    top_windows_by_duration = pd.read_csv(table_dir / "top_windows_by_duration.csv")
 
     event_counts = event_counts_df.iloc[0].to_dict() if not event_counts_df.empty else {}
+    if overall_status == "PASS":
+        slide1_takeaway = "Data quality gates passed at a usable level, so workload outputs are decision-ready."
+    elif overall_status == "WARN":
+        slide1_takeaway = (
+            "Data quality is usable with caveats; continuity masking and block-limited windows were applied."
+        )
+    else:
+        slide1_takeaway = (
+            "Data quality failed trust gates; use this session only for descriptive review, not workload decisions."
+        )
 
     deck_outline = pd.DataFrame(
         [
@@ -74,18 +111,17 @@ def main() -> None:
                 "title": "Session Snapshot + Validation Gates",
                 "figure_or_table": (
                     "outputs/tables/slide_1_data_quality_table.csv; "
-                    "outputs/tables/slide_1_validation_gates_table.csv"
+                    "outputs/tables/slide_1_validation_gates_table.csv; "
+                    "outputs/tables/slide_1_qc_checks_table.csv"
                 ),
-                "one_line_takeaway": (
-                    "Data quality gates passed at a usable level, so workload outputs are decision-ready."
-                ),
+                "one_line_takeaway": slide1_takeaway,
             },
             {
                 "slide": 2,
                 "title": "Where: Spatial Usage and Role Signature",
                 "figure_or_table": (
-                    "outputs/figures/01_space.png; outputs/figures/04_structure.png; "
-                    "outputs/phase_table.csv; outputs/session_structure_map.csv"
+                    "outputs/figures/01_space.png; outputs/phase_table.csv; "
+                    "outputs/session_structure_map.csv"
                 ),
                 "one_line_takeaway": (
                     "The session lived in specific field zones and repeated role-consistent movement patterns."
@@ -149,52 +185,118 @@ def main() -> None:
     definitions_text = (
         "Definitions and Assumptions\n"
         f"- Speed bands (mph): {speed_band_text}.\n"
-        f"- HSR/Sprint thresholds: >= {hsr_threshold_mph:.1f} mph / >= 16.0 mph.\n"
+        f"- HSR/Sprint thresholds: >= {hsr_threshold_mph:.1f} mph / >= {sprint_threshold_mph:.1f} mph.\n"
         f"- Accel/Decel thresholds: >= {accel_threshold_ms2:.1f} / <= {decel_threshold_ms2:.1f} m/s^2.\n"
         "- Acceleration signal policy: use signed `sa` channel for accel/decel events and extrema.\n"
         "- Event definition: contiguous threshold exposure >= 1.0 s.\n"
-        "- Unit conversions: speed yd/s -> mph x 2.0454545; accel yd/s^2 -> m/s^2 x 0.9144.\n"
-        "- Distance policy: workload totals use speed-derived step distance.\n"
+        f"- Unit conversions: speed yd/s -> mph x {speed_conversion_factor:.7f}; "
+        f"accel yd/s^2 -> m/s^2 x {accel_conversion_factor:.4f}.\n"
+        "- Distance policy: workload totals use speed-derived step distance (`s*dt`); vendor `dis` is QA-only.\n"
         "- Continuity policy: windows/events and trajectory lines reset at flagged gaps/improbable jumps."
     )
     write_slide_text(text_dir / "slide_1_definitions_and_assumptions.txt", definitions_text)
 
-    qa_table = pd.DataFrame([qa_summary])[
-        [
-            "sample_count",
-            "expected_cadence_s",
-            "pct_on_expected_cadence",
-            "max_gap_s",
-            "gap_count",
-            "gap_threshold_s",
-            "step_distance_outlier_source",
-            "step_distance_outlier_threshold_yd",
-            "step_distance_outlier_count",
-            "step_distance_outlier_pct",
-        ]
-    ].rename(
+    qa_cols = [
+        "overall_status",
+        "sample_count",
+        "expected_cadence_s",
+        "pct_on_expected_cadence",
+        "cadence_p95_s",
+        "cadence_p99_s",
+        "max_gap_s",
+        "gap_count",
+        "gap_pct",
+        "gap_threshold_s",
+        "max_xy_step_yd",
+        "teleport_count",
+        "teleport_pct",
+        "teleport_speed_threshold_yd_s",
+        "inactive_speed_threshold_mph",
+        "inactive_sample_count",
+        "inactive_sample_pct",
+        "position_outlier_low_quantile",
+        "position_outlier_high_quantile",
+        "position_outlier_count",
+        "position_outlier_pct",
+        "speed_xy_alignment_samples",
+        "speed_xy_corr",
+        "speed_xy_error_p95_yd_s",
+        "speed_xy_outlier_pct",
+        "speed_xy_outlier_threshold_yd_s",
+        "step_distance_outlier_source",
+        "step_distance_outlier_threshold_yd",
+        "step_distance_outlier_count",
+        "step_distance_outlier_pct",
+        "distance_yd_from_speed",
+        "distance_yd_from_dis",
+        "distance_dis_minus_speed_pct",
+    ]
+    qa_cols = [col for col in qa_cols if col in qa_summary]
+    qa_table = pd.DataFrame([qa_summary])[qa_cols].rename(
         columns={
+            "overall_status": "Overall status",
             "sample_count": "Sample count",
             "expected_cadence_s": "Expected cadence (s)",
             "pct_on_expected_cadence": "% at expected cadence",
+            "cadence_p95_s": "Cadence p95 (s)",
+            "cadence_p99_s": "Cadence p99 (s)",
             "max_gap_s": "Max gap (s)",
             "gap_count": "Gap count",
+            "gap_pct": "Gap count (%)",
             "gap_threshold_s": "Gap threshold (s)",
+            "max_xy_step_yd": "Max XY step (yd)",
+            "teleport_count": "Teleport count",
+            "teleport_pct": "Teleport count (%)",
+            "teleport_speed_threshold_yd_s": "Teleport threshold (yd/s)",
+            "inactive_speed_threshold_mph": "Inactive threshold (mph)",
+            "inactive_sample_count": "Inactive sample count",
+            "inactive_sample_pct": "Inactive sample (%)",
+            "position_outlier_low_quantile": "Position outlier q_low",
+            "position_outlier_high_quantile": "Position outlier q_high",
+            "position_outlier_count": "Position outlier count",
+            "position_outlier_pct": "Position outlier (%)",
+            "speed_xy_alignment_samples": "Speed/XY alignment samples",
+            "speed_xy_corr": "Speed vs XY corr (r)",
+            "speed_xy_error_p95_yd_s": "Speed vs XY error p95 (yd/s)",
+            "speed_xy_outlier_pct": "Speed vs XY outlier (%)",
+            "speed_xy_outlier_threshold_yd_s": "Speed vs XY outlier threshold (yd/s)",
             "step_distance_outlier_source": "Outlier source",
             "step_distance_outlier_threshold_yd": "Outlier threshold (yd)",
             "step_distance_outlier_count": "Outlier count",
             "step_distance_outlier_pct": "Outlier count (%)",
+            "distance_yd_from_speed": "Distance from s*dt (yd)",
+            "distance_yd_from_dis": "Distance from dis (yd)",
+            "distance_dis_minus_speed_pct": "dis vs s*dt delta (%)",
         }
     )
     for col, digits in [
         ("Expected cadence (s)", 3),
         ("% at expected cadence", 2),
+        ("Cadence p95 (s)", 3),
+        ("Cadence p99 (s)", 3),
         ("Max gap (s)", 2),
         ("Gap threshold (s)", 2),
+        ("Gap count (%)", 3),
+        ("Max XY step (yd)", 2),
+        ("Teleport count (%)", 3),
+        ("Teleport threshold (yd/s)", 2),
+        ("Inactive threshold (mph)", 2),
+        ("Inactive sample (%)", 2),
+        ("Position outlier q_low", 2),
+        ("Position outlier q_high", 2),
+        ("Position outlier (%)", 2),
+        ("Speed vs XY corr (r)", 3),
+        ("Speed vs XY error p95 (yd/s)", 2),
+        ("Speed vs XY outlier (%)", 2),
+        ("Speed vs XY outlier threshold (yd/s)", 2),
         ("Outlier threshold (yd)", 2),
         ("Outlier count (%)", 2),
+        ("Distance from s*dt (yd)", 1),
+        ("Distance from dis (yd)", 1),
+        ("dis vs s*dt delta (%)", 1),
     ]:
-        qa_table[col] = qa_table[col].round(digits)
+        if col in qa_table.columns:
+            qa_table[col] = qa_table[col].round(digits)
     qa_table.to_csv(table_dir / "slide_1_data_quality_table.csv", index=False)
 
     gate_table = validation_gates.copy()
@@ -213,21 +315,59 @@ def main() -> None:
         gate_table["Value"] = pd.to_numeric(gate_table["Value"], errors="coerce").round(3)
     gate_table.to_csv(table_dir / "slide_1_validation_gates_table.csv", index=False)
 
+    qc_checks_table = qc_checks.rename(
+        columns={
+            "check": "Check",
+            "status": "Status",
+            "value": "Value",
+            "threshold": "Threshold",
+            "unit": "Unit",
+            "notes": "Notes",
+        }
+    )
+    if "Value" in qc_checks_table.columns:
+        qc_checks_table["Value"] = pd.to_numeric(qc_checks_table["Value"], errors="coerce").round(3)
+    qc_checks_table.to_csv(table_dir / "slide_1_qc_checks_table.csv", index=False)
+
     pass_count = int((validation_gates["status"] == "PASS").sum()) if not validation_gates.empty else 0
+    qc_check_pass = int((qc_checks["status"] == "PASS").sum()) if not qc_checks.empty else 0
+    qc_check_total = int(len(qc_checks))
+    dis_delta_text = "N/A"
+    if "dis vs s*dt delta (%)" in qa_table.columns:
+        dis_delta_text = f"{qa_table['dis vs s*dt delta (%)'].iloc[0]:.1f}%"
     qa_text_lines = [
         "Data QA Summary",
+        f"- QC: {qc_status}; Overall status: {overall_status}.",
         f"- {qa_table['% at expected cadence'].iloc[0]:.1f}% samples at 0.1s cadence.",
         (
             f"- Max gap: {qa_table['Max gap (s)'].iloc[0]:.2f}s; "
             f"gaps flagged above {qa_table['Gap threshold (s)'].iloc[0]:.2f}s."
         ),
         (
+            f"- Inactive samples (<= {qa_table['Inactive threshold (mph)'].iloc[0]:.1f} mph): "
+            f"{qa_table['Inactive sample (%)'].iloc[0]:.1f}%."
+        ) if "Inactive threshold (mph)" in qa_table.columns and "Inactive sample (%)" in qa_table.columns else "- Inactive sample % unavailable.",
+        (
+            f"- Position outliers ({qa_table['Position outlier q_low'].iloc[0]:.2f}-{qa_table['Position outlier q_high'].iloc[0]:.2f} quantiles): "
+            f"{qa_table['Position outlier (%)'].iloc[0]:.2f}%."
+        ) if "Position outlier (%)" in qa_table.columns else "- Position outlier % unavailable.",
+        (
+            f"- Speed-vs-XY sanity: corr {qa_table['Speed vs XY corr (r)'].iloc[0]:.3f}, "
+            f"outliers {qa_table['Speed vs XY outlier (%)'].iloc[0]:.2f}%."
+        ) if "Speed vs XY corr (r)" in qa_table.columns and "Speed vs XY outlier (%)" in qa_table.columns else "- Speed-vs-XY sanity metrics unavailable.",
+        (
             f"- Outlier threshold: {qa_table['Outlier threshold (yd)'].iloc[0]:.2f} yd; flagged "
             f"{int(qa_table['Outlier count'].iloc[0])} samples "
             f"({qa_table['Outlier count (%)'].iloc[0]:.2f}%)."
         ),
+        f"- Vendor `dis` vs speed-integrated distance delta: {dis_delta_text}.",
         f"- Validation gates passed: {pass_count}/{len(validation_gates)}.",
+        f"- QC checks passed: {qc_check_pass}/{qc_check_total}.",
     ]
+    if overall_status == "WARN":
+        qa_text_lines.append("- Interpretation policy: usable with caveats; windows/events/maps are continuity-masked.")
+    if overall_status == "FAIL":
+        qa_text_lines.append("- Interpretation policy: do not use this session for workload decision thresholds.")
     qa_text_lines.extend([f"- {line}" for line in validation_takeaways[:3]])
     write_slide_text(text_dir / "slide_1_data_quality_takeaways.txt", "\n".join(qa_text_lines))
 
@@ -263,24 +403,63 @@ def main() -> None:
     slide3_events["HSR distance (yd)"] = slide3_events["HSR distance (yd)"].round(1)
     slide3_events["Sprint distance (yd)"] = slide3_events["Sprint distance (yd)"].round(1)
 
-    slide3_top_windows = peak_windows[
-        ["window_rank", "window_start_utc", "window_end_utc", "distance_yd", "dominant_phase"]
+    slide3_top_windows = top_windows_by_duration[
+        [
+            "window_s",
+            "window_rank",
+            "window_start_utc",
+            "window_end_utc",
+            "distance_yd",
+            "dominant_phase",
+            "hsr_event_count",
+            "accel_event_count",
+            "decel_event_count",
+        ]
     ].copy()
+    slide3_top_windows = slide3_top_windows.sort_values(["window_s", "window_rank"]).reset_index(drop=True)
+    if not slide3_top_windows.empty:
+        slide3_top_windows["peak_intensity_yd_min"] = (
+            pd.to_numeric(slide3_top_windows["distance_yd"], errors="coerce")
+            * (60.0 / pd.to_numeric(slide3_top_windows["window_s"], errors="coerce").replace(0.0, np.nan))
+        ).fillna(0.0)
+    slide3_top_windows["Window duration"] = slide3_top_windows["window_s"].map(
+        lambda s: f"{int(s // 60)}m" if int(s) % 60 == 0 else f"{int(s)}s"
+    )
     slide3_top_windows = slide3_top_windows.rename(
         columns={
             "window_rank": "Window",
             "window_start_utc": "Start (UTC)",
             "window_end_utc": "End (UTC)",
+            "peak_intensity_yd_min": "Peak intensity (yd/min)",
             "distance_yd": "Distance in window (yd)",
             "dominant_phase": "Dominant phase",
+            "hsr_event_count": "HSR events",
+            "accel_event_count": "Accel events",
+            "decel_event_count": "Decel events",
         }
     )
+    slide3_top_windows = slide3_top_windows[
+        [
+            "Window duration",
+            "Window",
+            "Start (UTC)",
+            "End (UTC)",
+            "Peak intensity (yd/min)",
+            "Distance in window (yd)",
+            "Dominant phase",
+            "HSR events",
+            "Accel events",
+            "Decel events",
+        ]
+    ]
     slide3_top_windows["Start (UTC)"] = pd.to_datetime(
         slide3_top_windows["Start (UTC)"], utc=True, format="mixed"
     ).dt.strftime("%H:%M:%S")
     slide3_top_windows["End (UTC)"] = pd.to_datetime(
         slide3_top_windows["End (UTC)"], utc=True, format="mixed"
     ).dt.strftime("%H:%M:%S")
+    if "Peak intensity (yd/min)" in slide3_top_windows.columns:
+        slide3_top_windows["Peak intensity (yd/min)"] = slide3_top_windows["Peak intensity (yd/min)"].round(1)
     slide3_top_windows["Distance in window (yd)"] = slide3_top_windows["Distance in window (yd)"].round(1)
 
     slide3_distance.to_csv(table_dir / "slide_3_peak_distance_table.csv", index=False)
@@ -294,12 +473,22 @@ def main() -> None:
             "- Not enough samples to derive stable top-demand windows in this session."
         )
     else:
-        best = peak_windows.iloc[0]
+        best_candidates = top_windows_by_duration[top_windows_by_duration["window_s"] == 60]
+        if best_candidates.empty:
+            best_candidates = top_windows_by_duration
+        best = best_candidates.copy()
+        best["peak_intensity_yd_min"] = (
+            pd.to_numeric(best["distance_yd"], errors="coerce")
+            * (60.0 / pd.to_numeric(best["window_s"], errors="coerce").replace(0.0, np.nan))
+        ).fillna(0.0)
+        best = best.sort_values("peak_intensity_yd_min", ascending=False).iloc[0]
         best_start = pd.Timestamp(best["window_start_utc"]).strftime("%H:%M:%S")
         best_end = pd.Timestamp(best["window_end_utc"]).strftime("%H:%M:%S")
+        duration_label = f"{int(best['window_s'] // 60)}-min" if int(best["window_s"]) % 60 == 0 else f"{int(best['window_s'])}s"
         slide3_text = (
             "Peak Demand Takeaways\n"
-            f"- Best 1-min demand: {float(best['distance_yd']):.1f} yd from {best_start} to {best_end} UTC.\n"
+            f"- Best {duration_label} intensity: {float(best['peak_intensity_yd_min']):.1f} yd/min "
+            f"({float(best['distance_yd']):.1f} yd) from {best_start} to {best_end} UTC.\n"
             f"- Context: HSR/Sprint events {int(best['hsr_event_count'])}/{int(best['sprint_event_count'])}; "
             f"Accel/Decel {int(best['accel_event_count'])}/{int(best['decel_event_count'])}.\n"
             f"- Dominant phase: {best['dominant_phase'] or 'N/A'}.\n"
@@ -366,12 +555,52 @@ def main() -> None:
         slide5_text = "Early vs Late Takeaways\n- Insufficient data for a stable split-half comparison."
     write_slide_text(text_dir / "slide_5_early_late_takeaways.txt", slide5_text)
 
+    coach_pkg_dir = output_dir / "coach_package"
+    coach_pkg_dir.mkdir(parents=True, exist_ok=True)
+    if top_windows_by_duration.empty:
+        peak_line = "Peak demand window unavailable from current data."
+    else:
+        top_peak = top_windows_by_duration.copy()
+        top_peak["peak_intensity_yd_min"] = (
+            pd.to_numeric(top_peak["distance_yd"], errors="coerce")
+            * (60.0 / pd.to_numeric(top_peak["window_s"], errors="coerce").replace(0.0, np.nan))
+        ).fillna(0.0)
+        top_peak = top_peak.sort_values("peak_intensity_yd_min", ascending=False).iloc[0]
+        top_peak_start = pd.Timestamp(top_peak["window_start_utc"]).strftime("%H:%M:%S")
+        top_peak_end = pd.Timestamp(top_peak["window_end_utc"]).strftime("%H:%M:%S")
+        peak_line = (
+            f"Top demand window: {float(top_peak['peak_intensity_yd_min']):.0f} yd/min "
+            f"({float(top_peak['distance_yd']):.0f} yd in {int(top_peak['window_s'])}s, "
+            f"{top_peak_start}-{top_peak_end} UTC), phase {top_peak['dominant_phase'] or 'N/A'}."
+        )
+    if len(slide5_table) == 2:
+        late_row = slide5_table.loc[slide5_table["Period"] == "Late Half"].iloc[0]
+        drift_line = f"Late vs early distance drift: {late_row['Distance vs early (%)']:+.1f}%."
+    else:
+        drift_line = "Late-vs-early comparison unavailable."
+    coach_package_lines = [
+        "Coach Package (3 bullets)",
+        f"- QC status: {qc_status}.",
+        f"- {peak_line}",
+        f"- {drift_line}",
+    ]
+    write_slide_text(coach_pkg_dir / "coach_package_bullets.txt", "\n".join(coach_package_lines))
+
     figure_aliases = {
         "01_space.png": "coach_slide_movement_map.png",
         "02_time.png": "coach_slide_intensity_timeline.png",
         "03_peaks.png": "coach_slide_peak_demand_summary.png",
-        "04_structure.png": "coach_slide_session_structure_map.png",
     }
+    deprecated_aliases = [
+        "coach_slide_qc_overview.png",
+        "coach_slide_session_structure_map.png",
+        "coach_slide_phase_speed_bands.png",
+    ]
+    for alias_name in deprecated_aliases:
+        alias_path = fig_dir / alias_name
+        if alias_path.exists():
+            alias_path.unlink()
+
     for source_name, alias_name in figure_aliases.items():
         source = fig_dir / source_name
         if not source.exists():
@@ -384,6 +613,7 @@ def main() -> None:
     print(f"Results contract: {output_dir / 'results.json'}")
     print(f"Text blocks: {text_dir}")
     print(f"Tables: {table_dir}")
+    print(f"Coach package: {coach_pkg_dir}")
     print(f"Figure aliases: {', '.join(figure_aliases.values())}")
 
 

@@ -4,6 +4,7 @@ import pandas as pd
 
 from browns_tracking.metrics import (
     PeakDemandConfig,
+    SpeedBand,
     compute_peak_demand_timeseries,
     default_absolute_speed_bands,
     peak_distance_table,
@@ -12,9 +13,12 @@ from browns_tracking.metrics import (
 )
 from browns_tracking.pipeline import (
     annotate_tracking_continuity,
+    build_visualization_frame,
+    build_qc_check_table,
     build_validation_takeaways,
     classify_hsr_exposure,
     compute_data_quality_summary,
+    compute_qc_status,
     compute_session_event_counts,
     compute_validation_gates,
     load_tracking_data,
@@ -34,6 +38,7 @@ from browns_tracking.segmentation import (
     detect_segments,
     summarize_segments,
 )
+from browns_tracking.presets import PerformanceModelPreset
 
 
 def test_summarize_speed_bands_totals_match() -> None:
@@ -66,6 +71,7 @@ def test_peak_distance_table_and_top_windows() -> None:
     table = peak_distance_table(rolling, [3])
 
     assert table["best_distance_yd"].iloc[0] == 6.0
+    assert table["best_intensity_yd_per_min"].iloc[0] == 120.0
 
     ranking_input = pd.DataFrame(
         {
@@ -132,6 +138,7 @@ def test_build_coach_phase_summary_limits_phase_count() -> None:
 
     assert coach_summary["coach_phase_id"].nunique() <= 4
     assert coach_df["coach_phase_label"].nunique() <= 4
+    assert "coach_phase_type" in coach_summary.columns
     assert coach_summary["intensity_level"].isin({"Low", "Moderate", "High"}).all()
 
 
@@ -240,10 +247,31 @@ def test_data_quality_summary_and_exposure_labels() -> None:
     qa = compute_data_quality_summary(df, outlier_quantile=0.75, gap_threshold_s=0.15)
     assert qa["gap_count"] == 1
     assert qa["step_distance_outlier_count"] >= 1
+    assert "inactive_sample_pct" in qa
+    assert "position_outlier_pct" in qa
+    assert "speed_xy_corr" in qa
 
     assert classify_hsr_exposure(1000.0, 20.0) == "Low"
     assert classify_hsr_exposure(1000.0, 70.0) == "Moderate"
     assert classify_hsr_exposure(1000.0, 150.0) == "High"
+
+
+def test_build_visualization_frame_filters_samples() -> None:
+    df = pd.DataFrame(
+        {
+            "ts": pd.date_range("2025-01-01", periods=6, freq="1s", tz="UTC"),
+            "x": [0.0, 0.5, 1.0, 2.0, 200.0, 2.5],
+            "y": [0.0, 0.5, 1.0, 2.0, 300.0, 2.5],
+            "dt_s": [0.1, 0.1, 0.1, 0.5, 0.1, 0.1],
+            "speed_mph": [0.2, 0.6, 1.0, 1.2, 1.4, 1.1],
+            "spatial_sample_ok": [True, True, True, True, True, True],
+            "continuous_block_id": [0, 0, 0, 1, 1, 1],
+        }
+    )
+    out = build_visualization_frame(df, active_speed_threshold_mph=0.5, gap_threshold_s=0.2)
+    assert not out.empty
+    assert bool((out["speed_mph"] >= 0.5).all())
+    assert bool((out["dt_s"] <= 0.2).all())
 
 
 def test_validation_gates_and_takeaways() -> None:
@@ -265,9 +293,60 @@ def test_validation_gates_and_takeaways() -> None:
         "improbable_jump_pct",
         "speed_alignment_corr",
         "speed_alignment_outlier_pct",
+        "vendor_dis_distance_delta_pct",
     }
     assert len(takeaways) >= 3
     assert "Validation gates" in takeaways[0]
+
+
+def test_qc_checks_and_status_include_dis_alignment() -> None:
+    df = pd.DataFrame(
+        {
+            "ts": pd.date_range("2025-01-01", periods=6, freq="1s", tz="UTC"),
+            "x": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+            "y": [10.0, 10.2, 10.4, 10.6, 10.8, 11.0],
+            "dt_s": [1.0] * 6,
+            "s": [1.0, 1.1, 1.0, 1.2, 1.1, 1.0],
+            "speed_mph": [2.0, 2.2, 2.0, 2.4, 2.2, 2.0],
+            "step_distance_xy_yd": [0.0, 1.0, 1.1, 0.9, 1.2, 1.0],
+            "step_distance_yd_from_speed": [1.0, 1.1, 1.0, 1.2, 1.1, 1.0],
+            "step_distance_yd_vendor_dis": [20.0] * 6,
+            "signed_accel_ms2": [0.1, -0.1, 0.2, -0.2, 0.1, -0.1],
+        }
+    )
+    qa = compute_data_quality_summary(df, gap_threshold_s=1.5)
+    gates = compute_validation_gates(df, max_plausible_xy_speed_yd_s=10.0)
+    checks = build_qc_check_table(df, qa_summary=qa, validation_gates=gates)
+    status = compute_qc_status(checks)
+
+    assert "vendor_dis_distance_delta_pct" in set(checks["check_key"])
+    assert status == "QC FAILED"
+
+
+def test_qc_status_warn_for_limited_impact_issues() -> None:
+    speed_yd_s = [1.0 + (0.01 * i) for i in range(20)]
+    dt_s = [0.1] * 10 + [6.0] + [0.1] * 9
+    step_dist = [s * dt for s, dt in zip(speed_yd_s, dt_s, strict=False)]
+    df = pd.DataFrame(
+        {
+            "ts": pd.date_range("2025-01-01", periods=20, freq="1s", tz="UTC"),
+            "x": [float(i) for i in range(20)],
+            "y": [20.0 + float(i) * 0.5 for i in range(20)],
+            "dt_s": dt_s,
+            "s": speed_yd_s,
+            "speed_mph": [s * 2.0454545454545454 for s in speed_yd_s],
+            "step_distance_xy_yd": step_dist,
+            "step_distance_yd_from_speed": step_dist,
+            "step_distance_yd_vendor_dis": [1.5] * 20,  # 50% delta vs speed distance.
+            "signed_accel_ms2": [0.1, -0.1] * 10,
+        }
+    )
+    qa = compute_data_quality_summary(df, gap_threshold_s=1.5)
+    gates = compute_validation_gates(df, max_plausible_xy_speed_yd_s=10.0)
+    checks = build_qc_check_table(df, qa_summary=qa, validation_gates=gates)
+    status = compute_qc_status(checks)
+
+    assert status == "QC WARN"
 
 
 def test_results_contract_roundtrip(tmp_path) -> None:
@@ -302,6 +381,49 @@ def test_results_contract_roundtrip(tmp_path) -> None:
     assert (tmp_path / "session_structure_map.csv").exists()
     assert contract["story_questions"][0].startswith("Where did the player")
     assert "validation_gates" in contract
+    assert contract["thresholds"]["sprint_threshold_mph"] == 16.0
+
+
+def test_run_session_analysis_uses_model_sprint_threshold(tmp_path) -> None:
+    raw = pd.DataFrame(
+        {
+            "ts": pd.date_range("2025-01-01", periods=60, freq="1s", tz="UTC"),
+            "x": [float(i) * 0.5 for i in range(60)],
+            "y": [float(i % 10) for i in range(60)],
+            "s": [8.8] * 20 + [7.9] * 20 + [6.0] * 20,  # ~18.0 mph, ~16.2 mph, ~12.3 mph
+            "a": [0.0] * 60,
+            "sa": [0.0] * 60,
+        }
+    )
+    csv_path = tmp_path / "tracking.csv"
+    raw.to_csv(csv_path, index=False)
+    loaded = load_tracking_data(csv_path)
+
+    custom_model = PerformanceModelPreset(
+        name="Custom Sprint Threshold Model",
+        rationale="Tests sprint-threshold propagation from speed bands.",
+        absolute_speed_bands=(
+            SpeedBand("Walk", 0.0, 3.0),
+            SpeedBand("Cruise", 3.0, 9.0),
+            SpeedBand("Run", 9.0, 13.0),
+            SpeedBand("HSR", 13.0, 18.0),
+            SpeedBand("Sprint", 18.0, None),
+        ),
+        relative_band_edges=(0.0, 0.4, 0.6, 0.8, 0.9, 1.0),
+        peak_demand_config=PeakDemandConfig(
+            distance_windows_s=(30, 60),
+            hsr_threshold_mph=13.0,
+            accel_threshold_ms2=3.0,
+            decel_threshold_ms2=-3.0,
+        ),
+        segmentation_config=SegmentationConfig(),
+    )
+    results = run_session_analysis(loaded, model=custom_model)
+
+    expected_sprint_distance = float(
+        loaded.loc[loaded["speed_mph"] >= 18.0, "step_distance_yd_from_speed"].sum()
+    )
+    assert results.event_counts["sprint_distance_yd"] == expected_sprint_distance
 
 
 def test_summarize_window_context() -> None:

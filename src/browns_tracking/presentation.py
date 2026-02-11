@@ -66,16 +66,23 @@ def coach_speed_band_table(speed_band_summary: pd.DataFrame) -> pd.DataFrame:
 
 
 def coach_peak_distance_table(distance_table: pd.DataFrame) -> pd.DataFrame:
-    """Round and rename best rolling distance table for slides."""
+    """Round and rename best rolling distance/intensity table for slides."""
     table = distance_table.copy()
+    if "best_intensity_yd_per_min" not in table.columns and "best_distance_yd" in table.columns:
+        table["best_intensity_yd_per_min"] = (
+            pd.to_numeric(table["best_distance_yd"], errors="coerce")
+            * (60.0 / pd.to_numeric(table["window_s"], errors="coerce").replace(0.0, pd.NA))
+        ).fillna(0.0)
     table = table.rename(
         columns={
             "window_label": "Window",
+            "best_intensity_yd_per_min": "Peak intensity (yd/min)",
             "best_distance_yd": "Best distance (yd)",
             "window_start_utc": "Start (UTC)",
             "window_end_utc": "End (UTC)",
         }
     )
+    table["Peak intensity (yd/min)"] = table["Peak intensity (yd/min)"].round(1)
     table["Best distance (yd)"] = table["Best distance (yd)"].round(1)
     table["Start (UTC)"] = pd.to_datetime(table["Start (UTC)"], utc=True, format="mixed").dt.strftime(
         "%H:%M:%S"
@@ -83,7 +90,7 @@ def coach_peak_distance_table(distance_table: pd.DataFrame) -> pd.DataFrame:
     table["End (UTC)"] = pd.to_datetime(table["End (UTC)"], utc=True, format="mixed").dt.strftime(
         "%H:%M:%S"
     )
-    return table[["Window", "Best distance (yd)", "Start (UTC)", "End (UTC)"]]
+    return table[["Window", "Peak intensity (yd/min)", "Best distance (yd)", "Start (UTC)", "End (UTC)"]]
 
 
 def coach_extrema_table(extrema_table: pd.DataFrame) -> pd.DataFrame:
@@ -106,6 +113,7 @@ def coach_segment_table(segment_summary: pd.DataFrame, top_n: int = 8) -> pd.Dat
     label_col = "coach_phase_label" if "coach_phase_label" in table.columns else "segment_label"
     rename_map = {
         label_col: "Phase",
+        "coach_phase_type": "Phase type",
         "intensity_level": "Intensity",
         "duration_min": "Duration (min)",
         "distance_yd": "Distance (yd)",
@@ -120,6 +128,7 @@ def coach_segment_table(segment_summary: pd.DataFrame, top_n: int = 8) -> pd.Dat
 
     keep = [
         "Phase",
+        "Phase type",
         "Intensity",
         "Duration (min)",
         "Distance (yd)",

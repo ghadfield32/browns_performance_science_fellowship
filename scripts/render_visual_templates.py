@@ -17,7 +17,6 @@ from browns_tracking.visuals import (
     plot_intensity_timeline,
     plot_movement_map,
     plot_peak_demand_summary,
-    plot_session_structure_map,
     save_figure,
 )
 
@@ -56,65 +55,68 @@ def main() -> None:
     table_paths = write_results_tables(results, output_dir)
 
     fig1, _ = plot_movement_map(
-        results.coach_df,
+        results.viz_df,
         segment_col="coach_phase_label",
         highlight_top_n=3,
         highlight_windows=results.peak_windows,
+        show_full_trace=False,
+        show_role_hypothesis=False,
     )
     fig2, _ = plot_intensity_timeline(
-        results.coach_df,
+        results.viz_df,
         top_windows=results.peak_windows,
         hsr_threshold_mph=model.peak_demand_config.hsr_threshold_mph,
-        phase_col="coach_phase_label",
+        phase_col="coach_intensity_level",
         show_phase_strip=True,
-        show_hsr_ticks=True,
+        show_hsr_ticks=False,
         show_cumulative_distance=False,
+        show_early_late_comparison=False,
+        display_resample_s=1,
+        distance_window_s=60,
     )
     fig3, _ = plot_peak_demand_summary(
         results.distance_table,
         results.extrema_table,
-        peak_windows=results.peak_windows,
+        peak_windows=results.top_windows_by_duration,
     )
-    fig4, _ = plot_session_structure_map(results.structure_map_summary)
 
     canonical_figures = {
         "space": fig_dir / "01_space.png",
         "time": fig_dir / "02_time.png",
         "peaks": fig_dir / "03_peaks.png",
     }
-    supplemental_figures = {
-        "structure_map": fig_dir / "04_structure.png",
-    }
-    legacy_figures = {
-        "movement_map_legacy": fig_dir / "movement_map.png",
-        "intensity_timeline_legacy": fig_dir / "intensity_timeline.png",
-        "peak_demand_summary_legacy": fig_dir / "peak_demand_summary.png",
-    }
 
     save_figure(fig1, canonical_figures["space"])
     save_figure(fig2, canonical_figures["time"])
     save_figure(fig3, canonical_figures["peaks"])
-    save_figure(fig4, supplemental_figures["structure_map"])
-    save_figure(fig1, legacy_figures["movement_map_legacy"])
-    save_figure(fig2, legacy_figures["intensity_timeline_legacy"])
-    save_figure(fig3, legacy_figures["peak_demand_summary_legacy"])
-    close_figures([fig1, fig2, fig3, fig4])
+    close_figures([fig1, fig2, fig3])
 
-    figure_paths = {**canonical_figures, **supplemental_figures, **legacy_figures}
+    deprecated_figures = [
+        fig_dir / "00_qc_overview.png",
+        fig_dir / "04_structure.png",
+        fig_dir / "05_phase_speed_bands.png",
+        fig_dir / "movement_map.png",
+        fig_dir / "intensity_timeline.png",
+        fig_dir / "peak_demand_summary.png",
+    ]
+    for deprecated_path in deprecated_figures:
+        if deprecated_path.exists():
+            deprecated_path.unlink()
+
     contract_path = write_results_contract(
         results,
         input_path=input_path,
         output_dir=output_dir,
         table_paths=table_paths,
-        figure_paths=figure_paths,
+        figure_paths=canonical_figures,
     )
 
     print("Export complete")
     print(f"Session rows: {results.session_summary['rows']}")
+    print(f"QC status: {results.qc_status}")
     print(f"Input data: {input_path}")
     print(f"Results contract: {contract_path}")
     print(f"Canonical figures: {canonical_figures['space']}, {canonical_figures['time']}, {canonical_figures['peaks']}")
-    print(f"Supplemental figure: {supplemental_figures['structure_map']}")
     print(f"Canonical tables: {output_dir / 'phase_table.csv'}, {output_dir / 'peak_windows.csv'}")
 
 

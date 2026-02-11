@@ -239,7 +239,7 @@ def top_non_overlapping_windows(
 def peak_distance_table(
     rolling_df: pd.DataFrame, windows_s: Sequence[int]
 ) -> pd.DataFrame:
-    """Best rolling distance for each window with start/end timestamps."""
+    """Best rolling distance and intensity-rate for each window with timestamps."""
     rows: list[dict[str, object]] = []
     for window_s in windows_s:
         metric_col = f"distance_{window_s}s_yd"
@@ -251,6 +251,7 @@ def peak_distance_table(
                     "window_s": int(window_s),
                     "window_label": _window_label(window_s),
                     "best_distance_yd": 0.0,
+                    "best_intensity_yd_per_min": 0.0,
                     "window_start_utc": pd.NaT,
                     "window_end_utc": pd.NaT,
                 }
@@ -264,6 +265,7 @@ def peak_distance_table(
                 "window_s": int(window_s),
                 "window_label": _window_label(window_s),
                 "best_distance_yd": float(rolling_df.loc[idx, metric_col]),
+                "best_intensity_yd_per_min": float(rolling_df.loc[idx, metric_col]) * (60.0 / float(window_s)),
                 "window_start_utc": end_ts - pd.to_timedelta(window_s, unit="s"),
                 "window_end_utc": end_ts,
             }

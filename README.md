@@ -14,6 +14,7 @@ Reproducible Python pipeline for one anonymized player 10 Hz practice tracking s
 - Speed zones: explicit band definitions and threshold model.
 - Segmentation: transparent algorithmic blocks plus coach-readable merged phases.
 - Communication: notebook + slide-ready text/tables/figures with action-oriented takeaways.
+- QA packaging: explicit `QC PASS` / `QC FAILED` status with compact checks + validation takeaways.
 - Units: yards, mph, m/s^2 with explicit conversion assumptions.
 
 ## Data and unit assumptions
@@ -93,17 +94,14 @@ For `NameError` execution-order failures (e.g., `df` not defined), `--flow` repo
 - `01_space.png`
 - `02_time.png`
 - `03_peaks.png`
-- `movement_map.png`
-- `intensity_timeline.png`
-- `peak_demand_summary.png`
 - `coach_slide_movement_map.png`
 - `coach_slide_intensity_timeline.png`
 - `coach_slide_peak_demand_summary.png`
 
 Movement map style is coach-focused:
 - density background + neutral full-session path
-- highlight top 2-3 demanding phases
-- direct phase annotations on plot (no giant segment legend)
+- highlight top 1-3 demanding windows
+- direct window/phase annotations on plot (no giant segment legend)
 
 ### Tables (`outputs/tables`)
 
@@ -117,12 +115,15 @@ Core:
 - `relative_speed_band_summary.csv`
 - `peak_distance_windows.csv`
 - `top_1m_distance_windows.csv`
+- `top_windows_by_duration.csv`
 - `session_extrema.csv`
+- `metrics_summary.csv`
 
 Context/QA:
 - `session_event_counts.csv`
 - `early_vs_late_summary.csv`
 - `data_quality_summary.csv`
+- `qc_checks.csv`
 - `coach_phase_summary.csv`
 
 Raw segmentation (kept for transparency):
@@ -140,6 +141,11 @@ Presentation tables:
 - `slide_3_top_windows_table.csv`
 - `slide_4_segment_table.csv`
 - `slide_5_early_late_table.csv`
+
+Layered output directories:
+- `outputs/qc_summary/` (QA tables + QC status)
+- `outputs/metrics_summary/` (session metrics package)
+- `outputs/coach_package/` (coach bullets + package-ready tables)
 
 ### Slide text (`outputs/slide_text`)
 

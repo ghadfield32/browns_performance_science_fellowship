@@ -137,6 +137,7 @@ def build_coach_phase_summary(
 
     work["coach_phase_id"] = -1
     work["coach_phase_name"] = ""
+    work["coach_phase_type"] = ""
     work["coach_phase_label"] = ""
     work["coach_intensity_level"] = ""
 
@@ -154,13 +155,22 @@ def build_coach_phase_summary(
             decel_threshold_ms2=decel_threshold_ms2,
         )
 
+        phase_type = _infer_phase_type(
+            phase_summary,
+            phase_idx=phase_idx,
+            total_phases=len(phase_spans),
+        )
         phase_name = f"Phase {phase_idx:02d}"
-        phase_label = f"{phase_name}: {phase_summary['intensity_level']} Intensity"
+        phase_label = f"{phase_name}: {phase_type} ({phase_summary['intensity_level']})"
         rows.append(
             {
                 "coach_phase_id": phase_idx,
                 "coach_phase_name": phase_name,
+                "coach_phase_type": phase_type,
                 "coach_phase_label": phase_label,
+                "phase_inference_note": (
+                    "Inferred from speed/HSR/accel profile; verify against practice script."
+                ),
                 **phase_summary,
             }
         )
@@ -168,6 +178,7 @@ def build_coach_phase_summary(
         phase_index = work.index[start_i:end_i]
         work.loc[phase_index, "coach_phase_id"] = phase_idx
         work.loc[phase_index, "coach_phase_name"] = phase_name
+        work.loc[phase_index, "coach_phase_type"] = phase_type
         work.loc[phase_index, "coach_phase_label"] = phase_label
         work.loc[phase_index, "coach_intensity_level"] = phase_summary["intensity_level"]
 
@@ -434,6 +445,37 @@ def _phase_intensity_level(mean_speed_mph: float, hsr_distance_pct: float) -> st
     if mean_speed_mph >= 6.0 or hsr_distance_pct >= 4.0:
         return "Moderate"
     return "Low"
+
+
+def _infer_phase_type(
+    phase_summary: dict[str, object],
+    *,
+    phase_idx: int,
+    total_phases: int,
+) -> str:
+    duration_min = float(phase_summary["duration_s"]) / 60.0
+    distance_yd = float(phase_summary["distance_yd"])
+    mean_speed_mph = float(phase_summary["mean_speed_mph"])
+    hsr_distance_yd = float(phase_summary["hsr_distance_yd"])
+    sprint_distance_yd = float(phase_summary["sprint_distance_yd"])
+    hsr_pct = (hsr_distance_yd / distance_yd * 100.0) if distance_yd > 0 else 0.0
+    accel_events = int(phase_summary["accel_event_count"])
+    decel_events = int(phase_summary["decel_event_count"])
+    movement_event_rate = (accel_events + decel_events) / max(duration_min, 1e-9)
+
+    if phase_idx == 1 and mean_speed_mph < 6.5 and hsr_pct < 5.0:
+        return "Warm-up"
+    if phase_idx == total_phases and mean_speed_mph < 5.5 and hsr_pct < 5.0:
+        return "Cool-down / Walkthrough"
+    if duration_min <= 2.0 and mean_speed_mph < 3.5:
+        return "Reset / Rest"
+    if mean_speed_mph >= 11.0 or hsr_pct >= 12.0 or sprint_distance_yd >= 25.0:
+        return "Conditioning Push"
+    if mean_speed_mph >= 8.0 or hsr_pct >= 5.0:
+        return "Team Tempo"
+    if movement_event_rate >= 10.0 and hsr_pct < 5.0:
+        return "Individual / COD"
+    return "Technical / Install"
 
 
 def _count_boolean_runs(mask: pd.Series, dt_s: pd.Series, min_duration_s: float) -> int:
