@@ -32,8 +32,9 @@ from scipy.ndimage import gaussian_filter
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ── Paths ────────────────────────────────────────────────────────────────
-DATA_PATH = Path("/mnt/user-data/uploads/tracking_data.csv")
-OUT_DIR = Path("/home/claude/outputs")
+PROJECT_ROOT = Path(__file__).parent.parent
+DATA_PATH = PROJECT_ROOT / "data" / "tracking_data.csv"
+OUT_DIR = PROJECT_ROOT / "outputs"
 FIG_DIR = OUT_DIR / "figures"
 TABLE_DIR = OUT_DIR / "tables"
 for d in [FIG_DIR, TABLE_DIR]:

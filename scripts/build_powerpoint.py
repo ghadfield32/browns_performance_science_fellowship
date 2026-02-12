@@ -388,8 +388,6 @@ Recommendations:
 • Monitor early vs late drift as readiness signal
 • Target HSR exposure in specific drill phases
 • Validate movement patterns against position role
-
-Generated with Claude Code
 """
 
     add_text_box(slide, takeaways_text.strip(), left=1, top=1.5, width=8, height=5, size=14)

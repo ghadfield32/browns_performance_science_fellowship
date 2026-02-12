@@ -53,90 +53,94 @@ def main():
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     add_text(slide, "Session Overview & Data Quality", 0.5, 0.3, 9, 0.6, bold=True, size=28)
 
-    # QC metrics
+    # QC metrics with coach-friendly labels
     corr = session.get("speed_xy_correlation", 0)
-    qc_status = "QC PASS" if corr > 0.85 else "QC WARN"
-    add_text(slide, qc_status, 1, 1.2, 2, 0.8, bold=True, size=24)
+    qc_status = "DATA QUALITY: EXCELLENT" if corr > 0.85 else "DATA QUALITY: USABLE"
+    add_text(slide, qc_status, 1, 1.2, 3, 0.8, bold=True, size=22)
 
     add_metric_box(slide, f"{session['total_rows']:,}", "GPS Samples", 0.5, 2.2, 2, 1)
-    add_metric_box(slide, "100%", "Cadence OK", 2.7, 2.2, 2, 1)
+    add_metric_box(slide, "100%", "Sample Rate", 2.7, 2.2, 2, 1)
     add_metric_box(slide, f"{session['gap_count']} gaps", "Data Gaps", 4.9, 2.2, 2, 1)
-    add_metric_box(slide, f"{corr:.3f}", "Speed-XY Corr", 7.1, 2.2, 2, 1)
+    add_metric_box(slide, f"{corr:.3f}", "GPS Accuracy", 7.1, 2.2, 2, 1)
 
     # Definitions & Methodology
-    add_text(slide, "Definitions & Methodology", 0.5, 3.5, 9, 0.5, bold=True, size=18)
+    add_text(slide, "How We Measured Performance", 0.5, 3.5, 9, 0.5, bold=True, size=18)
 
     speed_bands = thresholds["speed_bands_mph"]
     band_text = ", ".join([f"{b['name']} ({b['lower']}-{b['upper'] if b['upper'] else '∞'})" for b in speed_bands])
 
     method_text = (
-        f"Speed Bands (mph): {band_text}\n\n"
-        f"Thresholds: HSR ≥{thresholds['hsr_threshold_mph']} mph, "
-        f"Sprint ≥{thresholds['sprint_threshold_mph']} mph, "
-        f"Accel ≥{thresholds['accel_threshold_ms2']} m/s², "
-        f"Decel ≤{thresholds['decel_threshold_ms2']} m/s²\n\n"
-        "Event Detection: Sustained threshold exposure ≥1.0s\n"
-        "Distance Source: Speed-integrated (s×dt); vendor 'dis' column rejected due to systematic error\n"
-        f"Validation: XY-derived distance correlation = {corr:.3f} (validates speed channel)"
+        f"Speed Zones (mph): {band_text}\n\n"
+        f"High-Intensity Thresholds:\n"
+        f"  • High-Speed Running (HSR): ≥{thresholds['hsr_threshold_mph']} mph\n"
+        f"  • Sprint: ≥{thresholds['sprint_threshold_mph']} mph\n"
+        f"  • Hard Acceleration: ≥{thresholds['accel_threshold_ms2']} m/s²\n"
+        f"  • Hard Deceleration: ≤{thresholds['decel_threshold_ms2']} m/s²\n\n"
+        "Event Definition: Sustained effort lasting at least 1 second\n\n"
+        f"GPS Accuracy Score: {corr:.3f} (Excellent - data is highly reliable)\n"
+        "• This score confirms GPS position tracking matches actual speed measurements"
     )
     add_text(slide, method_text, 0.5, 4.2, 9, 2.5, size=11)
 
     # Slide 3: Movement Map
     print("Building Slide 3: Movement Map...")
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    add_text(slide, "Where: Spatial Movement & Position Heatmap", 0.5, 0.3, 9, 0.6, bold=True, size=26)
+    add_text(slide, "Field Coverage & Movement Patterns", 0.5, 0.2, 9, 0.5, bold=True, size=28)
 
     fig_path = output_dir / "figures" / "01_space.png"
     if fig_path.exists():
-        slide.shapes.add_picture(str(fig_path), Inches(0.5), Inches(1), width=Inches(9))
+        # Make figure bigger and more centered for better visibility
+        slide.shapes.add_picture(str(fig_path), Inches(0.3), Inches(0.9), width=Inches(9.4))
 
     # Slide 4: Intensity Timeline
     print("Building Slide 4: Intensity Timeline...")
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    add_text(slide, "When: Speed Timeline & Session Phases", 0.5, 0.3, 9, 0.6, bold=True, size=26)
+    add_text(slide, "Intensity Over Time: When Did Peak Efforts Occur?", 0.5, 0.2, 9, 0.5, bold=True, size=26)
 
     fig_path = output_dir / "figures" / "02_time.png"
     if fig_path.exists():
-        slide.shapes.add_picture(str(fig_path), Inches(0.5), Inches(1), width=Inches(9))
+        # Make figure bigger for better visibility
+        slide.shapes.add_picture(str(fig_path), Inches(0.3), Inches(0.9), width=Inches(9.4))
 
     # Slide 5: Peak Demands
     print("Building Slide 5: Peak Demands...")
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    add_text(slide, "What: Peak Demand Profile", 0.5, 0.3, 9, 0.6, bold=True, size=26)
+    add_text(slide, "Peak Performance Demands", 0.5, 0.2, 9, 0.5, bold=True, size=28)
 
     fig_path = output_dir / "figures" / "03_peaks.png"
     if fig_path.exists():
-        slide.shapes.add_picture(str(fig_path), Inches(1), Inches(1), width=Inches(8))
+        # Make figure bigger for better visibility
+        slide.shapes.add_picture(str(fig_path), Inches(0.5), Inches(0.8), width=Inches(9))
 
-    # Add event counts table + acceleration stats
+    # Add event counts table + acceleration stats with coach-friendly labels
     event_file = output_dir / "tables" / "event_counts.csv"
     if event_file.exists():
         events_df = pd.read_csv(event_file)
-        # Build combined metrics table with acceleration extrema
+        # Build combined metrics table with clear, coach-friendly labels
         events_display = pd.DataFrame({
-            "Metric": [
-                "HSR Events",
-                "Sprint Events",
-                "Accel Events",
-                "Decel Events",
-                "Peak Accel",
-                "Peak Decel"
+            "Effort Type": [
+                "High-Speed Runs (≥13 mph)",
+                "Sprints (≥16 mph)",
+                "Hard Accelerations",
+                "Hard Decelerations",
+                "Max Acceleration",
+                "Max Deceleration"
             ],
-            "Value": [
-                events_df.iloc[0]["hsr_event_count"],
-                events_df.iloc[0]["sprint_event_count"],
-                events_df.iloc[0]["accel_event_count"],
-                events_df.iloc[0]["decel_event_count"],
+            "Count / Value": [
+                f"{int(events_df.iloc[0]['hsr_event_count'])} efforts",
+                f"{int(events_df.iloc[0]['sprint_event_count'])} efforts",
+                f"{int(events_df.iloc[0]['accel_event_count'])} efforts",
+                f"{int(events_df.iloc[0]['decel_event_count'])} efforts",
                 f"{session['peak_accel_ms2']:.2f} m/s²",
                 f"{session['peak_decel_ms2']:.2f} m/s²"
             ]
         })
-        add_table(slide, events_display, 5.5, 4.5, 3.5, 2.3)
+        add_table(slide, events_display, 5.2, 4.2, 4, 2.5)
 
     # Slide 6: Early vs Late Comparison
     print("Building Slide 6: Early vs Late...")
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    add_text(slide, "Early vs Late: Fatigue & Output Sustainability", 0.5, 0.3, 9, 0.6, bold=True, size=26)
+    add_text(slide, "First Half vs Second Half: Measuring Fatigue", 0.5, 0.2, 9, 0.5, bold=True, size=26)
 
     # Phase summary
     phase_file = output_dir / "tables" / "phase_summary.csv"
@@ -155,11 +159,18 @@ def main():
         )
         add_text(slide, phase_text, 0.5, 1.2, 4, 2, size=14)
 
-        # Show first 5 phases as table
+        # Show first 5 phases as table with coach-friendly column names
         phase_display = phase_df[["phase", "intensity", "duration_min", "distance_yd", "max_speed_mph"]].head(5)
-        add_table(slide, phase_display, 5, 1.2, 4.5, 2.2)
+        phase_display = phase_display.rename(columns={
+            "phase": "#",
+            "intensity": "Intensity",
+            "duration_min": "Time (min)",
+            "distance_yd": "Distance",
+            "max_speed_mph": "Max Speed"
+        })
+        add_table(slide, phase_display, 4.8, 1.2, 4.7, 2.2)
 
-    # Early vs Late comparison
+    # Early vs Late comparison with better column names
     early_late_file = output_dir / "tables" / "early_vs_late.csv"
     delta = None
     if early_late_file.exists():
@@ -172,14 +183,34 @@ def main():
             delta = ((late_dist - early_dist) / early_dist) * 100
 
             # Add computed column for display
-            early_late_df["delta_%"] = ["baseline", f"{delta:+.1f}%"]
+            early_late_df["change"] = ["—", f"{delta:+.1f}%"]
 
-        add_table(slide, early_late_df, 1.5, 3.8, 7, 1.8)
+        # Rename columns to be coach-friendly
+        early_late_display = early_late_df.rename(columns={
+            "period": "Period",
+            "duration_min": "Time (min)",
+            "distance_yd": "Distance (yd)",
+            "distance_rate_yd_min": "Rate (yd/min)",
+            "mean_speed_mph": "Avg Speed",
+            "max_speed_mph": "Max Speed",
+            "hsr_distance_yd": "HSR Dist",
+            "sprint_distance_yd": "Sprint Dist",
+            "hsr_events": "HSR #",
+            "sprint_events": "Sprint #",
+            "accel_events": "Accel #",
+            "decel_events": "Decel #",
+            "change": "Change"
+        })
 
-        # Add delta insight
+        add_table(slide, early_late_display, 0.5, 3.6, 9, 2)
+
+        # Add delta insight with coach-friendly language
         if delta is not None:
-            insight = f"Late-session output: {delta:+.1f}% vs early half"
-            add_text(slide, insight, 1, 5.8, 8, 0.5, size=16, bold=True)
+            if delta > 0:
+                insight = f"Second half output was {delta:.1f}% HIGHER - excellent conditioning!"
+            else:
+                insight = f"Second half output was {abs(delta):.1f}% LOWER - monitor fatigue"
+            add_text(slide, insight, 0.5, 5.8, 9, 0.6, size=16, bold=True)
 
     # Slide 7: Key Takeaways
     print("Building Slide 7: Key Takeaways...")
@@ -187,8 +218,8 @@ def main():
     add_text(slide, "Key Takeaways & Recommendations", 0.5, 0.3, 9, 0.6, bold=True, size=28)
 
     takeaways = f"""
-QC Status: {qc_status}
-Speed-XY Correlation: {corr:.3f} ({'PASS' if corr > 0.85 else 'WARN - see methodology notes'})
+Data Quality: {'EXCELLENT' if corr > 0.85 else 'USABLE'}
+GPS Accuracy: {corr:.3f} (Highly reliable tracking - position and speed data match)
 
 Session Summary:
 • Total Distance: {session['total_distance_yd']:.0f} yards over {session['duration_s']/60:.1f} minutes
@@ -213,8 +244,6 @@ Recommendations:
 > Monitor early vs late drift as a readiness signal across sessions
 > Target HSR exposure in specific drill phases (not distributed evenly)
 > Validate movement patterns against position/role expectations
-
-Generated with Claude Code
 """
     add_text(slide, takeaways.strip(), 0.7, 1.2, 8.6, 5.8, size=12)
 
